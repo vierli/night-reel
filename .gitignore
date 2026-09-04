@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+data/media/*.mp4
+data/playlist.json
+data/*.tmp
+!.gitkeep
+

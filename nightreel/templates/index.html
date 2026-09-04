@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#11100f">
+    <meta name="description" content="Control local looped video playback on your Raspberry Pi.">
+    <title>Night Reel · Pi video control</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  </head>
+  <body>
+    <svg class="icon-library" aria-hidden="true">
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 5 9 7-9 7zm10 0h2v14h-2z"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M11 16V8.8L8.4 11.4 7 10l5-5 5 5-1.4 1.4L13 8.8V16zm-5 3v-5h2v3h8v-3h2v5z"/></symbol>
+      <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 3.8 20.2 7 17 10.2V8H8a3 3 0 0 0-3 3H3a5 5 0 0 1 5-5h9zM7 13.8V16h9a3 3 0 0 0 3-3h2a5 5 0 0 1-5 5H7v2.2L3.8 17z"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M8 4h8l1 2h3v2H4V6h3zm-1 6h10l-1 10H8z"/></symbol>
+      <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m6.6 15.4 5.4-5.4 5.4 5.4L16 16.8l-4-4-4 4z"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6.6 8.6 5.4 5.4 5.4-5.4L16 7.2l-4 4-4-4z"/></symbol>
+    </svg>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Night Reel home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Night Reel</span>
+      </a>
+      <div class="connection" id="connection">
+        <span class="connection-dot"></span>
+        <span id="connection-label">Connecting to player</span>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="player-panel" aria-labelledby="now-playing-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Raspberry Pi · HDMI output</p>
+            <h1 id="now-playing-heading">Now playing</h1>
+          </div>
+          <span class="state-pill" id="state-pill" data-state="stopped">Stopped</span>
+        </div>
+
+        <div class="screen" id="screen" data-state="stopped">
+          <div class="screen-grid" aria-hidden="true"></div>
+          <div class="screen-content">
+            <p class="screen-kicker" id="screen-kicker">Ready when you are</p>
+            <h2 id="current-title">No video selected</h2>
+            <p class="screen-file" id="current-file">Add an MP4 to start the loop</p>
+            <div class="timecode" aria-label="Current playback time">
+              <span id="elapsed-time">00:00:00</span>
+              <span class="time-divider">/</span>
+              <span id="duration-time">00:00:00</span>
+            </div>
+          </div>
+          <div class="playing-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        </div>
+
+        <div class="timeline" aria-hidden="true">
+          <div class="timeline-fill" id="timeline-fill"></div>
+        </div>
+        <div class="timeline-meta">
+          <span id="timeline-status">Waiting for a video</span>
+          <span><svg class="icon"><use href="#i-loop"></use></svg> Loop on</span>
+        </div>
+
+        <div class="transport" aria-label="Playback controls">
+          <button class="control primary" id="play-button" type="button">
+            <svg class="icon"><use href="#i-play"></use></svg>
+            <span>Start</span>
+          </button>
+          <button class="control" id="pause-button" type="button">
+            <svg class="icon"><use href="#i-pause"></use></svg>
+            <span>Pause</span>
+          </button>
+          <button class="control" id="stop-button" type="button">
+            <svg class="icon"><use href="#i-stop"></use></svg>
+            <span>Stop</span>
+          </button>
+          <button class="control icon-control" id="next-button" type="button" aria-label="Play next video" title="Next video">
+            <svg class="icon"><use href="#i-next"></use></svg>
+          </button>
+        </div>
+      </section>
+
+      <aside class="queue-panel" aria-labelledby="queue-heading">
+        <div class="queue-heading">
+          <div>
+            <p class="eyebrow">Continuous playback</p>
+            <h2 id="queue-heading">Loop queue</h2>
+          </div>
+          <span class="count-badge" id="queue-count">0 videos</span>
+        </div>
+
+        <label class="dropzone" id="dropzone" for="file-input">
+          <input id="file-input" type="file" accept="video/mp4,.mp4" multiple>
+          <span class="upload-icon"><svg class="icon"><use href="#i-upload"></use></svg></span>
+          <span class="dropzone-copy"><strong>Add MP4 videos</strong><small>Choose files or drop them here</small></span>
+          <span class="browse-label">Browse</span>
+        </label>
+        <div class="upload-progress" id="upload-progress" hidden>
+          <div class="upload-progress-fill" id="upload-progress-fill"></div>
+        </div>
+
+        <div class="queue-list" id="queue-list" aria-live="polite"></div>
+        <div class="empty-state" id="empty-state">
+          <div class="empty-index">01</div>
+          <strong>Your queue is empty</strong>
+          <p>Uploaded videos appear here and play from top to bottom.</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer>
+      <span>Controller address</span>
+      <code id="controller-address">—</code>
+      <span class="footer-separator">·</span>
+      <span id="backend-label">Checking playback engine…</span>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
+

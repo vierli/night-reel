@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import io
+import time
+
+import pytest
+
+from nightreel import create_app
+from nightreel.player import MockEngine
+
+
+@pytest.fixture()
+def app(tmp_path):
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": tmp_path,
+            "PLAYER_BACKEND": "mock",
+            "MAX_CONTENT_LENGTH": 10 * 1024 * 1024,
+        }
+    )
+    yield application
+    application.extensions["nightreel_player"].shutdown()
+
+
+@pytest.fixture()
+def client(app):
+    return app.test_client()
+
+
+def upload(client, name="opening.mp4", payload=b"fake mp4 bytes"):
+    return client.post(
+        "/api/videos",
+        data={"files": (io.BytesIO(payload), name)},
+        content_type="multipart/form-data",
+    )
+
+
+def test_empty_status_and_health(client):
+    page = client.get("/")
+    assert page.status_code == 200
+    assert b"Night Reel" in page.data
+    assert client.get("/health").get_json() == {"ok": True}
+    status = client.get("/api/status").get_json()
+    assert status["playlist"] == []
+    assert status["player"]["state"] == "stopped"
+    assert status["player"]["loop"] is True
+
+
+def test_upload_play_pause_stop_and_delete(client):
+    uploaded = upload(client).get_json()
+    video = uploaded["added"][0]
+    assert video["name"] == "opening"
+
+    playing = client.post("/api/control", json={"action": "play"}).get_json()
+    assert playing["player"]["state"] == "playing"
+    assert playing["player"]["current_id"] == video["id"]
+
+    paused = client.post("/api/control", json={"action": "pause"}).get_json()
+    assert paused["player"]["state"] == "paused"
+
+    stopped = client.post("/api/control", json={"action": "stop"}).get_json()
+    assert stopped["player"]["state"] == "stopped"
+
+    deleted = client.delete(f"/api/videos/{video['id']}").get_json()
+    assert deleted["playlist"] == []
+    assert client.get("/api/status").get_json()["player"]["current"] is None
+
+
+def test_reorder_and_duplicate_filenames(client):
+    first = upload(client, "loop.mp4").get_json()["added"][0]
+    second = upload(client, "loop.mp4").get_json()["added"][0]
+    assert first["filename"] == "loop.mp4"
+    assert second["filename"] == "loop-2.mp4"
+
+    reordered = client.put(
+        "/api/playlist/order",
+        json={"ordered_ids": [second["id"], first["id"]]},
+    ).get_json()
+    assert [item["id"] for item in reordered["playlist"]] == [second["id"], first["id"]]
+
+
+def test_rejects_non_mp4_and_bad_commands(client):
+    response = upload(client, "notes.txt")
+    assert response.status_code == 400
+    assert "Only .mp4" in response.get_json()["error"]
+
+    response = client.post("/api/control", json={"action": "rewind"})
+    assert response.status_code == 400
+
+
+def test_finished_video_automatically_advances(tmp_path):
+    engine = MockEngine()
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": tmp_path,
+            "PLAYER_ENGINE": engine,
+        }
+    )
+    client = application.test_client()
+    first = upload(client, "first.mp4").get_json()["added"][0]
+    second = upload(client, "second.mp4").get_json()["added"][0]
+    client.post("/api/control", json={"action": "play", "video_id": first["id"]})
+
+    engine._state = "ended"
+    time.sleep(0.3)
+
+    status = client.get("/api/status").get_json()
+    assert status["player"]["state"] == "playing"
+    assert status["player"]["current_id"] == second["id"]
+    application.extensions["nightreel_player"].shutdown()
