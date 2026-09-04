@@ -9,7 +9,7 @@ The control screen shows the current file and live timecode, supports start, pau
 Night Reel targets the current 64-bit Raspberry Pi OS with the desktop. Connect the Pi to the display and open a terminal in the graphical desktop session.
 
 ```bash
-git clone <your-repository-url> nightreel
+git clone https://github.com/vierli/night-reel.git nightreel
 cd nightreel
 chmod +x install-pi.sh
 ./install-pi.sh
@@ -75,4 +75,3 @@ You can also copy MP4 files directly into `data/media/`; Night Reel discovers th
 python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
-
