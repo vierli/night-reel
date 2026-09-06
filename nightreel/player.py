@@ -164,6 +164,8 @@ class PlaybackController:
         self._current_id: str | None = None
         self._loaded_id: str | None = None
         self._last_error: str | None = None
+        self._clock_elapsed_ms = 0
+        self._clock_started_at: float | None = None
         self._closing = threading.Event()
         self._monitor = threading.Thread(
             target=self._monitor_playback,
@@ -177,7 +179,8 @@ class PlaybackController:
             videos = self.store.list()
             current = self.store.get(self._current_id)
             state = self.engine.state() if self._loaded_id else "stopped"
-            elapsed = self.engine.elapsed_ms() if self._loaded_id else 0
+            engine_elapsed = self.engine.elapsed_ms() if self._loaded_id else 0
+            elapsed = max(engine_elapsed, self._clock_value(state)) if self._loaded_id else 0
             duration = self.engine.duration_ms() if self._loaded_id else 0
             elapsed = min(elapsed, duration) if duration else elapsed
             return {
@@ -213,14 +216,23 @@ class PlaybackController:
             if should_load:
                 self.engine.load(self.store.path_for(target_id))
                 self._loaded_id = target_id
+                self._clock_elapsed_ms = 0
+                self._clock_started_at = None
             self._current_id = target_id
             self._last_error = None
             self.engine.play()
+            if self._clock_started_at is None:
+                self._clock_started_at = time.monotonic()
             return self.status()
 
     def pause(self) -> dict:
         with self._lock:
             if self._loaded_id and self.engine.state() == "playing":
+                self._clock_elapsed_ms = max(
+                    self.engine.elapsed_ms(),
+                    self._clock_value("playing"),
+                )
+                self._clock_started_at = None
                 self.engine.pause()
             return self.status()
 
@@ -228,6 +240,8 @@ class PlaybackController:
         with self._lock:
             if self._loaded_id:
                 self.engine.stop()
+            self._clock_elapsed_ms = 0
+            self._clock_started_at = None
             return self.status()
 
     def next(self) -> dict:
@@ -245,6 +259,8 @@ class PlaybackController:
                 self.engine.stop()
                 self._loaded_id = None
                 self._current_id = None
+                self._clock_elapsed_ms = 0
+                self._clock_started_at = None
                 if remaining:
                     next_index = min(removed_index, len(remaining) - 1)
                     self._current_id = remaining[next_index]["id"]
@@ -275,6 +291,12 @@ class PlaybackController:
             target = ids[0]
         self._loaded_id = None
         self.play(target)
+
+    def _clock_value(self, state: str) -> int:
+        elapsed = self._clock_elapsed_ms
+        if self._clock_started_at is not None and state in {"playing", "loading"}:
+            elapsed += int((time.monotonic() - self._clock_started_at) * 1000)
+        return max(0, elapsed)
 
     def _monitor_playback(self) -> None:
         while not self._closing.wait(0.25):

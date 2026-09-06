@@ -27,11 +27,15 @@ const dom = {
 };
 
 let snapshot = null;
-let snapshotAt = performance.now();
 let renderedPlaylistKey = "";
 let pollTimer = null;
 let toastTimer = null;
 let commandPending = false;
+let displayClock = {
+  currentId: null,
+  elapsedMs: 0,
+  frameAt: performance.now(),
+};
 
 function icon(symbol) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -96,11 +100,21 @@ async function pollStatus() {
 }
 
 function applyStatus(data) {
+  const previousState = snapshot?.player?.state;
   snapshot = data;
-  snapshotAt = performance.now();
   const player = data.player;
   const current = player.current;
   const state = player.state;
+
+  const videoChanged = displayClock.currentId !== player.current_id;
+  const wasStopped = previousState === "stopped" && state !== "stopped";
+  if (videoChanged || state === "stopped" || wasStopped) {
+    displayClock.elapsedMs = player.elapsed_ms || 0;
+  } else {
+    displayClock.elapsedMs = Math.max(displayClock.elapsedMs, player.elapsed_ms || 0);
+  }
+  displayClock.currentId = player.current_id;
+  displayClock.frameAt = performance.now();
 
   dom.statePill.dataset.state = state;
   dom.statePill.textContent = stateLabel(state);
@@ -125,9 +139,16 @@ function applyStatus(data) {
 function renderTimecode() {
   if (!snapshot) return;
   const player = snapshot.player;
-  let elapsed = player.elapsed_ms || 0;
-  if (player.state === "playing") elapsed += performance.now() - snapshotAt;
-  if (player.duration_ms) elapsed = Math.min(elapsed, player.duration_ms);
+  const now = performance.now();
+  if (player.state === "playing" || player.state === "loading") {
+    displayClock.elapsedMs += now - displayClock.frameAt;
+  }
+  displayClock.frameAt = now;
+  let elapsed = displayClock.elapsedMs;
+  if (player.duration_ms) {
+    elapsed = Math.min(elapsed, player.duration_ms);
+    displayClock.elapsedMs = elapsed;
+  }
   dom.elapsed.textContent = formatTime(elapsed);
   dom.duration.textContent = formatTime(player.duration_ms);
   const percent = player.duration_ms ? (elapsed / player.duration_ms) * 100 : 0;

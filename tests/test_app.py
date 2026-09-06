@@ -110,3 +110,26 @@ def test_finished_video_automatically_advances(tmp_path):
     assert status["player"]["state"] == "playing"
     assert status["player"]["current_id"] == second["id"]
     application.extensions["nightreel_player"].shutdown()
+
+
+def test_timecode_advances_when_engine_reports_zero(tmp_path):
+    class ZeroTimeEngine(MockEngine):
+        def elapsed_ms(self):
+            return 0
+
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": tmp_path,
+            "PLAYER_ENGINE": ZeroTimeEngine(),
+        }
+    )
+    client = application.test_client()
+    upload(client, "clock-test.mp4")
+    client.post("/api/control", json={"action": "play"})
+
+    time.sleep(0.03)
+
+    status = client.get("/api/status").get_json()
+    assert status["player"]["elapsed_ms"] >= 20
+    application.extensions["nightreel_player"].shutdown()
