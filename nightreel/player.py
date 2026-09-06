@@ -61,12 +61,19 @@ class VLCEngine:
             if self._instance is None:
                 raise RuntimeError("VLC could not create a playback instance")
             self._player = self._instance.media_player_new()
+            self._media = None
         except Exception as exc:
             raise RuntimeError(f"VLC could not be initialized: {exc}") from exc
 
     def load(self, path: Path) -> None:
         media = self._instance.media_new_path(os.fspath(path))
+        self._media = media
         self._player.set_media(media)
+        try:
+            media.parse_with_options(self._vlc.MediaParseFlag.local, 3_000)
+        except (AttributeError, TypeError):
+            # Playback still works on older libVLC builds without this parser API.
+            pass
 
     def play(self) -> None:
         result = self._player.play()
@@ -98,7 +105,12 @@ class VLCEngine:
         return max(0, int(self._player.get_time()))
 
     def duration_ms(self) -> int:
-        return max(0, int(self._player.get_length()))
+        player_duration = max(0, int(self._player.get_length()))
+        if player_duration:
+            return player_duration
+        if self._media is not None:
+            return max(0, int(self._media.get_duration()))
+        return 0
 
     def close(self) -> None:
         self.stop()
@@ -180,7 +192,8 @@ class PlaybackController:
             current = self.store.get(self._current_id)
             state = self.engine.state() if self._loaded_id else "stopped"
             engine_elapsed = self.engine.elapsed_ms() if self._loaded_id else 0
-            elapsed = max(engine_elapsed, self._clock_value(state)) if self._loaded_id else 0
+            fallback_elapsed = self._clock_value(state) if self._loaded_id else 0
+            elapsed = max(engine_elapsed, fallback_elapsed)
             duration = self.engine.duration_ms() if self._loaded_id else 0
             elapsed = min(elapsed, duration) if duration else elapsed
             return {
@@ -190,6 +203,8 @@ class PlaybackController:
                     "current": current,
                     "elapsed_ms": elapsed,
                     "duration_ms": duration,
+                    "engine_elapsed_ms": engine_elapsed,
+                    "fallback_elapsed_ms": fallback_elapsed,
                     "loop": True,
                     "backend": self.engine.backend_name,
                     "error": self._last_error,

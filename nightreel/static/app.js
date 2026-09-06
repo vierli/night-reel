@@ -137,22 +137,23 @@ function applyStatus(data) {
 }
 
 function renderTimecode() {
-  if (!snapshot) return;
-  const player = snapshot.player;
   const now = performance.now();
-  if (player.state === "playing" || player.state === "loading") {
-    displayClock.elapsedMs += now - displayClock.frameAt;
+  if (snapshot) {
+    const player = snapshot.player;
+    if (player.state === "playing" || player.state === "loading") {
+      displayClock.elapsedMs += now - displayClock.frameAt;
+    }
+    let elapsed = displayClock.elapsedMs;
+    if (player.duration_ms) {
+      elapsed = Math.min(elapsed, player.duration_ms);
+      displayClock.elapsedMs = elapsed;
+    }
+    dom.elapsed.textContent = formatTime(elapsed);
+    dom.duration.textContent = formatTime(player.duration_ms);
+    const percent = player.duration_ms ? (elapsed / player.duration_ms) * 100 : 0;
+    dom.timelineFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
   }
   displayClock.frameAt = now;
-  let elapsed = displayClock.elapsedMs;
-  if (player.duration_ms) {
-    elapsed = Math.min(elapsed, player.duration_ms);
-    displayClock.elapsedMs = elapsed;
-  }
-  dom.elapsed.textContent = formatTime(elapsed);
-  dom.duration.textContent = formatTime(player.duration_ms);
-  const percent = player.duration_ms ? (elapsed / player.duration_ms) * 100 : 0;
-  dom.timelineFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
   requestAnimationFrame(renderTimecode);
 }
 

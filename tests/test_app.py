@@ -45,6 +45,8 @@ def test_empty_status_and_health(client):
     assert status["playlist"] == []
     assert status["player"]["state"] == "stopped"
     assert status["player"]["loop"] is True
+    assert status["player"]["engine_elapsed_ms"] == 0
+    assert status["player"]["fallback_elapsed_ms"] == 0
 
 
 def test_upload_play_pause_stop_and_delete(client):
@@ -132,4 +134,6 @@ def test_timecode_advances_when_engine_reports_zero(tmp_path):
 
     status = client.get("/api/status").get_json()
     assert status["player"]["elapsed_ms"] >= 20
+    assert status["player"]["engine_elapsed_ms"] == 0
+    assert status["player"]["fallback_elapsed_ms"] >= 20
     application.extensions["nightreel_player"].shutdown()
