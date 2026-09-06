@@ -28,6 +28,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_mapping(
         DATA_DIR=data_dir,
+        MEDIA_LIBRARY_DIR=os.environ.get("NIGHTREEL_MEDIA_DIR", project_root / "media"),
         MAX_CONTENT_LENGTH=int(os.environ.get("NIGHTREEL_MAX_UPLOAD_GB", "8"))
         * 1024
         * 1024
@@ -42,13 +43,18 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     data_dir = Path(app.config["DATA_DIR"]).resolve()
     media_dir = data_dir / "media"
-    store = PlaylistStore(data_dir / "playlist.json", media_dir)
+    library_dir = Path(app.config["MEDIA_LIBRARY_DIR"]).resolve()
+    store = PlaylistStore(
+        data_dir / "playlist.json",
+        media_dir,
+        library_dirs=[library_dir],
+    )
 
     injected_engine = app.config.get("PLAYER_ENGINE")
     if injected_engine is not None:
         engine = injected_engine
     elif app.config["PLAYER_BACKEND"] == "mock":
-        engine = MockEngine()
+        engine = MockEngine(fullscreen=bool(app.config["VLC_FULLSCREEN"]))
     else:
         engine = VLCEngine(
             fullscreen=bool(app.config["VLC_FULLSCREEN"]),
@@ -63,4 +69,3 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     atexit.register(controller.shutdown)
     return app
-

@@ -245,7 +245,7 @@ h1, .queue-heading h2 { margin-bottom: 0; font-size: clamp(24px, 3vw, 34px); lin
 .timeline-meta span:last-child { display: flex; align-items: center; gap: 5px; color: #b6aea2; }
 .timeline-meta .icon { width: 14px; height: 14px; color: var(--green); }
 
-.transport { display: grid; grid-template-columns: 1.35fr 1fr 1fr 48px; gap: 10px; }
+.transport { display: grid; grid-template-columns: 1.25fr .9fr .9fr 1.05fr 48px; gap: 10px; }
 .control {
   min-height: 48px;
   padding: 0 17px;
@@ -345,8 +345,9 @@ footer code { color: #aaa195; font-family: "SFMono-Regular", Consolas, monospace
   .shell { padding-top: 18px; gap: 14px; }
   .player-panel, .queue-panel { border-radius: 17px; }
   .screen { min-height: 280px; }
-  .transport { grid-template-columns: 1fr 1fr 1fr; }
-  .icon-control { grid-column: 1 / -1; }
+  .transport { grid-template-columns: 1fr 1fr; }
+  .transport .primary { grid-column: 1 / -1; }
+  .icon-control { grid-column: auto; }
   .browse-label { display: none; }
   .dropzone { grid-template-columns: 42px 1fr; }
   footer { flex-wrap: wrap; }
@@ -355,4 +356,3 @@ footer code { color: #aaa195; font-family: "SFMono-Regular", Consolas, monospace
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
-

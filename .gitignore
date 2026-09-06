@@ -3,8 +3,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .coverage
-data/media/*.mp4
+data/media/*
+!data/media/.gitkeep
+media/*
+!media/.gitkeep
 data/playlist.json
 data/*.tmp
 !.gitkeep
-

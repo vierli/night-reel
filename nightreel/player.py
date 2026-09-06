@@ -25,6 +25,8 @@ class PlaybackEngine(Protocol):
     def state(self) -> str: ...
     def elapsed_ms(self) -> int: ...
     def duration_ms(self) -> int: ...
+    def set_fullscreen(self, enabled: bool) -> bool: ...
+    def fullscreen(self) -> bool: ...
     def close(self) -> None: ...
 
 
@@ -112,6 +114,14 @@ class VLCEngine:
             return max(0, int(self._media.get_duration()))
         return 0
 
+    def set_fullscreen(self, enabled: bool) -> bool:
+        self._fullscreen = bool(enabled)
+        self._player.set_fullscreen(self._fullscreen)
+        return self._fullscreen
+
+    def fullscreen(self) -> bool:
+        return self._fullscreen
+
     def close(self) -> None:
         self.stop()
         self._player.release()
@@ -123,11 +133,12 @@ class MockEngine:
 
     backend_name = "mock"
 
-    def __init__(self, duration_ms: int = 180_000) -> None:
+    def __init__(self, duration_ms: int = 180_000, fullscreen: bool = True) -> None:
         self._duration = duration_ms
         self._elapsed = 0
         self._started_at = 0.0
         self._state = "stopped"
+        self._fullscreen = fullscreen
         self.path: Path | None = None
 
     def load(self, path: Path) -> None:
@@ -163,6 +174,13 @@ class MockEngine:
 
     def duration_ms(self) -> int:
         return self._duration if self.path else 0
+
+    def set_fullscreen(self, enabled: bool) -> bool:
+        self._fullscreen = bool(enabled)
+        return self._fullscreen
+
+    def fullscreen(self) -> bool:
+        return self._fullscreen
 
     def close(self) -> None:
         self.stop()
@@ -205,6 +223,7 @@ class PlaybackController:
                     "duration_ms": duration,
                     "engine_elapsed_ms": engine_elapsed,
                     "fallback_elapsed_ms": fallback_elapsed,
+                    "fullscreen": self.engine.fullscreen(),
                     "loop": True,
                     "backend": self.engine.backend_name,
                     "error": self._last_error,
@@ -286,6 +305,11 @@ class PlaybackController:
     def reorder(self, ordered_ids: list[str]) -> dict:
         with self._lock:
             self.store.reorder(ordered_ids)
+            return self.status()
+
+    def set_fullscreen(self, enabled: bool) -> dict:
+        with self._lock:
+            self.engine.set_fullscreen(enabled)
             return self.status()
 
     def shutdown(self) -> None:

@@ -2,7 +2,7 @@
 
 Night Reel is a local MP4 loop player for a Raspberry Pi 5. VLC renders video on the Pi's attached display while any phone, tablet, or computer on the same network can control playback from a web browser.
 
-The control screen shows the current file and live timecode, supports start, pause, stop, and next, and lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
+The control screen shows the current file and live timecode, supports start, pause, stop, next, and fullscreen/windowed display modes, and lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
 
 ## Raspberry Pi 5 setup
 
@@ -54,13 +54,14 @@ Configuration is supplied as environment variables, either in a terminal or in `
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NIGHTREEL_DATA_DIR` | `./data` | Playlist manifest and uploaded MP4 directory |
+| `NIGHTREEL_MEDIA_DIR` | `./media` | Folder scanned recursively for manually copied MP4 files |
 | `NIGHTREEL_MAX_UPLOAD_GB` | `8` | Maximum total size of one upload request |
 | `NIGHTREEL_FULLSCREEN` | `1` | Open VLC video in fullscreen mode |
 | `NIGHTREEL_AUDIO_OUTPUT` | empty | Optional VLC audio-output module |
 | `NIGHTREEL_VIDEO_OUTPUT` | empty | Optional VLC video-output module |
 | `NIGHTREEL_PLAYER_BACKEND` | `vlc` | Use `mock` only for development without VLC |
 
-You can also copy MP4 files directly into `data/media/`; Night Reel discovers them the next time it starts.
+Browser uploads are saved in `data/media/`. You can also copy MP4 files directly into `media/`, including subfolders. Night Reel scans both locations while it runs, and extension matching is case-insensitive (`.mp4` and `.MP4` both work).
 
 ## Notes
 

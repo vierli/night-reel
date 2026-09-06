@@ -49,6 +49,11 @@ def control():
         result = player().stop()
     elif action == "next":
         result = player().next()
+    elif action == "display_mode":
+        fullscreen = payload.get("fullscreen")
+        if not isinstance(fullscreen, bool):
+            return jsonify(error="fullscreen must be true or false"), 400
+        result = player().set_fullscreen(fullscreen)
     else:
         return jsonify(error="Unknown playback command"), 400
     return jsonify(result)
@@ -99,4 +104,3 @@ def handle_large_upload(_error):
 def handle_server_error(error):
     current_app.logger.exception("Unhandled request error", exc_info=error)
     return jsonify(error="The player encountered an unexpected error"), 500
-

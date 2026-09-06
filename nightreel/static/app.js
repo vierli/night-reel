@@ -13,6 +13,8 @@ const dom = {
   play: document.querySelector("#play-button"),
   pause: document.querySelector("#pause-button"),
   stop: document.querySelector("#stop-button"),
+  displayMode: document.querySelector("#display-mode-button"),
+  displayModeIcon: document.querySelector("#display-mode-icon"),
   next: document.querySelector("#next-button"),
   count: document.querySelector("#queue-count"),
   list: document.querySelector("#queue-list"),
@@ -129,8 +131,15 @@ function applyStatus(data) {
   dom.play.disabled = !hasVideos || commandPending;
   dom.pause.disabled = state !== "playing" || commandPending;
   dom.stop.disabled = !current || state === "stopped" || commandPending;
+  dom.displayMode.disabled = commandPending;
   dom.next.disabled = !hasVideos || commandPending;
   dom.play.querySelector("span").textContent = state === "paused" ? "Resume" : "Start";
+  dom.displayMode.querySelector("span").textContent = player.fullscreen ? "Windowed" : "Fullscreen";
+  dom.displayModeIcon.setAttribute("href", player.fullscreen ? "#i-windowed" : "#i-fullscreen");
+  dom.displayMode.setAttribute(
+    "aria-label",
+    player.fullscreen ? "Switch Pi display to windowed mode" : "Switch Pi display to fullscreen mode",
+  );
 
   if (player.error) showToast(player.error, true);
   renderPlaylist(data.playlist, player.current_id);
@@ -183,11 +192,11 @@ function renderPlaylist(videos, currentId) {
     const meta = document.createElement("small");
     meta.textContent = `${formatBytes(video.size_bytes)} · MP4`;
     copy.append(title, meta);
-    copy.addEventListener("click", () => sendControl("play", video.id));
+    copy.addEventListener("click", () => sendControl("play", { video_id: video.id }));
     copy.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        sendControl("play", video.id);
+        sendControl("play", { video_id: video.id });
       }
     });
 
@@ -215,11 +224,11 @@ function actionButton(symbol, label, handler, extraClass = "") {
   return button;
 }
 
-async function sendControl(action, videoId = null) {
+async function sendControl(action, details = {}) {
   if (commandPending) return;
   commandPending = true;
   try {
-    const body = videoId ? { action, video_id: videoId } : { action };
+    const body = { action, ...details };
     applyStatus(await api("/api/control", { method: "POST", body: JSON.stringify(body) }));
   } catch (error) {
     showToast(error.message, true);
@@ -297,6 +306,9 @@ function uploadFiles(files) {
 dom.play.addEventListener("click", () => sendControl("play"));
 dom.pause.addEventListener("click", () => sendControl("pause"));
 dom.stop.addEventListener("click", () => sendControl("stop"));
+dom.displayMode.addEventListener("click", () => {
+  if (snapshot) sendControl("display_mode", { fullscreen: !snapshot.player.fullscreen });
+});
 dom.next.addEventListener("click", () => sendControl("next"));
 dom.fileInput.addEventListener("change", event => uploadFiles(event.target.files));
 
