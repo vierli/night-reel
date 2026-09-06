@@ -54,6 +54,11 @@ def control():
         if not isinstance(fullscreen, bool):
             return jsonify(error="fullscreen must be true or false"), 400
         result = player().set_fullscreen(fullscreen)
+    elif action == "black_screen":
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            return jsonify(error="enabled must be true or false"), 400
+        result = player().set_black_screen(enabled)
     else:
         return jsonify(error="Unknown playback command"), 400
     return jsonify(result)

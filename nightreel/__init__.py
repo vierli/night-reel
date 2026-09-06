@@ -8,6 +8,7 @@ from pathlib import Path
 
 from flask import Flask
 
+from .black_screen import ensure_black_frame
 from .player import MockEngine, PlaybackController, VLCEngine
 from .routes import web
 from .storage import PlaylistStore
@@ -62,7 +63,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             video_output=str(app.config["VLC_VIDEO_OUTPUT"]),
         )
 
-    controller = PlaybackController(store, engine)
+    black_screen_path = ensure_black_frame(data_dir / "black-screen.png")
+    controller = PlaybackController(store, engine, black_screen_path)
     app.extensions["nightreel_store"] = store
     app.extensions["nightreel_player"] = controller
     app.register_blueprint(web)

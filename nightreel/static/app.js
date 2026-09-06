@@ -15,6 +15,7 @@ const dom = {
   stop: document.querySelector("#stop-button"),
   displayMode: document.querySelector("#display-mode-button"),
   displayModeIcon: document.querySelector("#display-mode-icon"),
+  blackScreen: document.querySelector("#black-screen-button"),
   next: document.querySelector("#next-button"),
   count: document.querySelector("#queue-count"),
   list: document.querySelector("#queue-list"),
@@ -66,7 +67,7 @@ function formatBytes(bytes) {
 }
 
 function stateLabel(state) {
-  return ({ playing: "Playing", paused: "Paused", loading: "Loading", error: "Error", ended: "Advancing" })[state] || "Stopped";
+  return ({ playing: "Playing", paused: "Paused", loading: "Loading", black: "Black screen", error: "Error", ended: "Advancing" })[state] || "Stopped";
 }
 
 function showToast(message, isError = false) {
@@ -107,10 +108,11 @@ function applyStatus(data) {
   const player = data.player;
   const current = player.current;
   const state = player.state;
+  const blackScreenActive = player.black_screen;
 
   const videoChanged = displayClock.currentId !== player.current_id;
   const wasStopped = previousState === "stopped" && state !== "stopped";
-  if (videoChanged || state === "stopped" || wasStopped) {
+  if (videoChanged || state === "stopped" || wasStopped || blackScreenActive) {
     displayClock.elapsedMs = player.elapsed_ms || 0;
   } else {
     displayClock.elapsedMs = Math.max(displayClock.elapsedMs, player.elapsed_ms || 0);
@@ -121,17 +123,18 @@ function applyStatus(data) {
   dom.statePill.dataset.state = state;
   dom.statePill.textContent = stateLabel(state);
   dom.screen.dataset.state = state;
-  dom.screenKicker.textContent = state === "playing" ? "Live on the attached display" : state === "paused" ? "Playback held" : "Ready when you are";
-  dom.currentTitle.textContent = current?.name || "No video selected";
-  dom.currentFile.textContent = current?.filename || "Add an MP4 to start the loop";
-  dom.timelineStatus.textContent = current ? `${stateLabel(state)} · ${current.name}` : "Waiting for a video";
+  dom.screenKicker.textContent = blackScreenActive ? "Live on the attached display" : state === "playing" ? "Live on the attached display" : state === "paused" ? "Playback held" : "Ready when you are";
+  dom.currentTitle.textContent = blackScreenActive ? "Black screen" : current?.name || "No video selected";
+  dom.currentFile.textContent = blackScreenActive ? "No playlist video is playing" : current?.filename || "Add an MP4 to start the loop";
+  dom.timelineStatus.textContent = blackScreenActive ? "Black screen active" : current ? `${stateLabel(state)} · ${current.name}` : "Waiting for a video";
   dom.backend.textContent = player.backend === "mock" ? "Demo playback engine" : "VLC playback engine";
 
   const hasVideos = data.playlist.length > 0;
   dom.play.disabled = !hasVideos || commandPending;
   dom.pause.disabled = state !== "playing" || commandPending;
-  dom.stop.disabled = !current || state === "stopped" || commandPending;
+  dom.stop.disabled = (((!current || state === "stopped") && !blackScreenActive) || commandPending);
   dom.displayMode.disabled = commandPending;
+  dom.blackScreen.disabled = commandPending;
   dom.next.disabled = !hasVideos || commandPending;
   dom.play.querySelector("span").textContent = state === "paused" ? "Resume" : "Start";
   dom.displayMode.querySelector("span").textContent = player.fullscreen ? "Windowed" : "Fullscreen";
@@ -140,6 +143,8 @@ function applyStatus(data) {
     "aria-label",
     player.fullscreen ? "Switch Pi display to windowed mode" : "Switch Pi display to fullscreen mode",
   );
+  dom.blackScreen.querySelector("span").textContent = blackScreenActive ? "Exit black" : "Black screen";
+  dom.blackScreen.setAttribute("aria-pressed", String(blackScreenActive));
 
   if (player.error) showToast(player.error, true);
   renderPlaylist(data.playlist, player.current_id);
@@ -308,6 +313,9 @@ dom.pause.addEventListener("click", () => sendControl("pause"));
 dom.stop.addEventListener("click", () => sendControl("stop"));
 dom.displayMode.addEventListener("click", () => {
   if (snapshot) sendControl("display_mode", { fullscreen: !snapshot.player.fullscreen });
+});
+dom.blackScreen.addEventListener("click", () => {
+  if (snapshot) sendControl("black_screen", { enabled: !snapshot.player.black_screen });
 });
 dom.next.addEventListener("click", () => sendControl("next"));
 dom.fileInput.addEventListener("change", event => uploadFiles(event.target.files));

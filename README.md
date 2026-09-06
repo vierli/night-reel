@@ -2,7 +2,7 @@
 
 Night Reel is a local MP4 loop player for a Raspberry Pi 5. VLC renders video on the Pi's attached display while any phone, tablet, or computer on the same network can control playback from a web browser.
 
-The control screen shows the current file and live timecode, supports start, pause, stop, next, and fullscreen/windowed display modes, and lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
+The control screen shows the current file and live timecode, supports start, pause, stop, next, fullscreen/windowed display modes, and a persistent black-screen output. It also lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
 
 ## Raspberry Pi 5 setup
 
@@ -69,6 +69,7 @@ Browser uploads are saved in `data/media/`. You can also copy MP4 files directly
 - Deleting a video removes the underlying MP4 from the Pi and cannot be undone.
 - If the active video ends, Night Reel starts the next item automatically. The final item wraps to the first.
 - If the active video is deleted, playback continues with the next available item.
+- **Black screen** stops playlist playback and keeps VLC's video output open on a generated black frame. Press Start or select a video to resume playback.
 
 ## Tests
 
