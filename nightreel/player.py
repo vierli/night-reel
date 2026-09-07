@@ -432,7 +432,9 @@ class PlaybackController:
         self._cue_previous_ms = elapsed_ms
 
     def _monitor_playback(self) -> None:
-        while not self._closing.wait(0.25):
+        # 20 Hz keeps show cues close to their millisecond timecodes without
+        # putting network I/O or other blocking work on the playback thread.
+        while not self._closing.wait(0.05):
             with self._lock:
                 if not self._loaded_id:
                     continue
