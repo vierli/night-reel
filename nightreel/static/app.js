@@ -27,6 +27,36 @@ const dom = {
   controllerAddress: document.querySelector("#controller-address"),
   backend: document.querySelector("#backend-label"),
   toast: document.querySelector("#toast"),
+  cueVideo: document.querySelector("#cue-video-select"),
+  cueScaleLabel: document.querySelector("#cue-scale-label"),
+  cuePlayhead: document.querySelector("#cue-playhead"),
+  cueMarkers: document.querySelector("#cue-markers"),
+  cueList: document.querySelector("#cue-list"),
+  cueEmpty: document.querySelector("#cue-empty"),
+  addCue: document.querySelector("#add-cue"),
+  addCurrentCue: document.querySelector("#add-current-cue"),
+  cueDialog: document.querySelector("#cue-dialog"),
+  cueForm: document.querySelector("#cue-form"),
+  cueDialogTitle: document.querySelector("#cue-dialog-title"),
+  cueDialogClose: document.querySelector("#cue-dialog-close"),
+  cueCancel: document.querySelector("#cue-cancel"),
+  cueId: document.querySelector("#cue-id"),
+  cueTime: document.querySelector("#cue-time"),
+  cueType: document.querySelector("#cue-type"),
+  cueLabel: document.querySelector("#cue-label"),
+  relayFields: document.querySelector("#relay-fields"),
+  relayUrl: document.querySelector("#relay-url"),
+  relayDuration: document.querySelector("#relay-duration"),
+  dmxFields: document.querySelector("#dmx-fields"),
+  dmxUrl: document.querySelector("#dmx-url"),
+  dmxTarget: document.querySelector("#dmx-target"),
+  dmxFixtureField: document.querySelector("#dmx-fixture-field"),
+  dmxFixture: document.querySelector("#dmx-fixture"),
+  dmxEnabled: document.querySelector("#dmx-enabled"),
+  dmxColorField: document.querySelector("#dmx-color-field"),
+  dmxColor: document.querySelector("#dmx-color"),
+  dmxDurationField: document.querySelector("#dmx-duration-field"),
+  dmxDuration: document.querySelector("#dmx-duration"),
 };
 
 let snapshot = null;
@@ -34,6 +64,10 @@ let renderedPlaylistKey = "";
 let pollTimer = null;
 let toastTimer = null;
 let commandPending = false;
+let cueVideosKey = "";
+let selectedCueVideoId = null;
+let cueItems = [];
+let cueLoadToken = 0;
 let displayClock = {
   currentId: null,
   elapsedMs: 0,
@@ -56,6 +90,22 @@ function formatTime(milliseconds) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return [hours, minutes, seconds].map(value => String(value).padStart(2, "0")).join(":");
+}
+
+function formatCueTime(milliseconds) {
+  const safe = Math.max(0, Math.floor(milliseconds || 0));
+  const hours = Math.floor(safe / 3600000);
+  const minutes = Math.floor((safe % 3600000) / 60000);
+  const seconds = Math.floor((safe % 60000) / 1000);
+  const millis = safe % 1000;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+}
+
+function parseCueTime(value) {
+  const match = /^(\d+):([0-5]\d):([0-5]\d)(?:\.(\d{1,3}))?$/.exec(value.trim());
+  if (!match) throw new Error("Use timecode format HH:MM:SS.mmm");
+  const millis = (match[4] || "0").padEnd(3, "0");
+  return Number(match[1]) * 3600000 + Number(match[2]) * 60000 + Number(match[3]) * 1000 + Number(millis);
 }
 
 function formatBytes(bytes) {
@@ -148,6 +198,8 @@ function applyStatus(data) {
 
   if (player.error) showToast(player.error, true);
   renderPlaylist(data.playlist, player.current_id);
+  syncCueVideoOptions(data.playlist, player.current_id);
+  renderCueTrack();
 }
 
 function renderTimecode() {
@@ -166,9 +218,265 @@ function renderTimecode() {
     dom.duration.textContent = formatTime(player.duration_ms);
     const percent = player.duration_ms ? (elapsed / player.duration_ms) * 100 : 0;
     dom.timelineFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+    updateCuePlayhead(elapsed);
   }
   displayClock.frameAt = now;
   requestAnimationFrame(renderTimecode);
+}
+
+function syncCueVideoOptions(videos, currentId) {
+  const key = videos.map(video => `${video.id}:${video.name}`).join("|");
+  const availableIds = new Set(videos.map(video => video.id));
+  const nextSelection = availableIds.has(selectedCueVideoId)
+    ? selectedCueVideoId
+    : (availableIds.has(currentId) ? currentId : videos[0]?.id || null);
+
+  if (key !== cueVideosKey) {
+    cueVideosKey = key;
+    dom.cueVideo.replaceChildren();
+    if (!videos.length) {
+      const option = document.createElement("option");
+      option.textContent = "No videos available";
+      option.value = "";
+      dom.cueVideo.append(option);
+    } else {
+      videos.forEach(video => {
+        const option = document.createElement("option");
+        option.value = video.id;
+        option.textContent = video.name;
+        dom.cueVideo.append(option);
+      });
+    }
+  }
+
+  if (nextSelection !== selectedCueVideoId) {
+    selectedCueVideoId = nextSelection;
+    cueItems = [];
+    loadCues(selectedCueVideoId);
+  }
+  dom.cueVideo.value = selectedCueVideoId || "";
+  dom.cueVideo.disabled = videos.length === 0;
+  dom.addCue.disabled = videos.length === 0;
+  dom.addCurrentCue.disabled = !selectedCueVideoId || currentId !== selectedCueVideoId;
+}
+
+async function loadCues(videoId) {
+  const token = ++cueLoadToken;
+  if (!videoId) {
+    cueItems = [];
+    renderCueTrack();
+    return;
+  }
+  try {
+    const data = await api(`/api/videos/${encodeURIComponent(videoId)}/cues`);
+    if (token !== cueLoadToken || videoId !== selectedCueVideoId) return;
+    cueItems = data.cues;
+    renderCueTrack();
+  } catch (error) {
+    if (token === cueLoadToken) showToast(error.message, true);
+  }
+}
+
+function selectCueVideo(videoId) {
+  if (!videoId || videoId === selectedCueVideoId) return;
+  selectedCueVideoId = videoId;
+  dom.cueVideo.value = videoId;
+  cueItems = [];
+  renderCueTrack();
+  loadCues(videoId);
+}
+
+function cueScaleDuration() {
+  const playerDuration = snapshot?.player?.current_id === selectedCueVideoId
+    ? snapshot.player.duration_ms || 0
+    : 0;
+  const latestCue = cueItems.reduce((latest, cue) => Math.max(latest, cue.time_ms), 0);
+  return Math.max(playerDuration || 60000, latestCue ? latestCue + 5000 : 0);
+}
+
+function updateCuePlayhead(elapsed = 0) {
+  if (!snapshot || snapshot.player.current_id !== selectedCueVideoId || snapshot.player.black_screen) {
+    dom.cuePlayhead.style.opacity = "0";
+    return;
+  }
+  const percent = Math.min(100, (Math.max(0, elapsed) / cueScaleDuration()) * 100);
+  dom.cuePlayhead.style.opacity = "1";
+  dom.cuePlayhead.style.left = `${percent}%`;
+}
+
+function cueSummary(cue) {
+  const config = cue.config;
+  if (cue.type === "relay") {
+    return `${config.base_url} · ${config.duration_ms.toLocaleString()} ms`;
+  }
+  const target = config.target === "all" ? "All fixtures" : `Fixture ${config.fixture_id}`;
+  const state = config.enabled ? `On · ${config.color.toUpperCase()}` : "Off";
+  const duration = config.enabled && config.duration_ms ? ` · ${config.duration_ms.toLocaleString()} ms` : "";
+  return `${target} · ${state}${duration} · ${config.base_url}`;
+}
+
+function renderCueTrack() {
+  const scale = cueScaleDuration();
+  dom.cueScaleLabel.textContent = `00:00:00 — ${formatTime(scale)}`;
+  dom.cueMarkers.replaceChildren();
+  dom.cueList.replaceChildren();
+  dom.cueEmpty.hidden = cueItems.length > 0;
+
+  cueItems.forEach(cue => {
+    const marker = document.createElement("button");
+    marker.type = "button";
+    marker.className = "cue-marker";
+    marker.dataset.type = cue.type;
+    marker.style.left = `${Math.min(100, (cue.time_ms / scale) * 100)}%`;
+    marker.title = `${formatCueTime(cue.time_ms)} · ${cue.label || (cue.type === "relay" ? "ESP32 relay" : "DMX light")}`;
+    marker.setAttribute("aria-label", marker.title);
+    marker.append(icon("i-bolt"));
+    marker.addEventListener("click", () => openCueDialog(cue));
+    dom.cueMarkers.append(marker);
+
+    const row = document.createElement("article");
+    row.className = "cue-row";
+
+    const time = document.createElement("span");
+    time.className = "cue-time";
+    time.textContent = formatCueTime(cue.time_ms);
+
+    const name = document.createElement("div");
+    name.className = "cue-action-name";
+    const typeIcon = document.createElement("span");
+    typeIcon.className = `cue-type-icon ${cue.type}`;
+    typeIcon.append(icon("i-bolt"));
+    const nameCopy = document.createElement("span");
+    const strong = document.createElement("strong");
+    strong.textContent = cue.label || (cue.type === "relay" ? "ESP32 relay" : "DMX light");
+    const small = document.createElement("small");
+    small.textContent = cue.type === "relay" ? "Relay" : "DMX";
+    nameCopy.append(strong, small);
+    name.append(typeIcon, nameCopy);
+
+    const summary = document.createElement("span");
+    summary.className = "cue-summary";
+    summary.textContent = cueSummary(cue);
+    summary.title = summary.textContent;
+
+    const activity = snapshot?.cue_activity?.[cue.id];
+    const status = document.createElement("span");
+    status.className = `cue-status ${activity?.state || "ready"}`;
+    const statusDot = document.createElement("i");
+    statusDot.className = "cue-status-dot";
+    const statusText = document.createElement("span");
+    statusText.textContent = activity?.message || "Ready";
+    statusText.title = statusText.textContent;
+    status.append(statusDot, statusText);
+
+    const actions = document.createElement("div");
+    actions.className = "cue-row-actions";
+    actions.append(
+      actionButton("i-play", "Test action now", () => testCue(cue)),
+      actionButton("i-edit", "Edit action", () => openCueDialog(cue)),
+      actionButton("i-trash", "Delete action", () => deleteCue(cue), "danger"),
+    );
+
+    row.append(time, name, summary, status, actions);
+    dom.cueList.append(row);
+  });
+  updateCuePlayhead(displayClock.elapsedMs);
+}
+
+function updateCueFormVisibility() {
+  const isRelay = dom.cueType.value === "relay";
+  dom.relayFields.hidden = !isRelay;
+  dom.dmxFields.hidden = isRelay;
+  dom.relayUrl.required = isRelay;
+  dom.relayDuration.required = isRelay;
+  dom.dmxUrl.required = !isRelay;
+  dom.dmxFixture.required = !isRelay && dom.dmxTarget.value === "fixture";
+  dom.dmxFixtureField.hidden = dom.dmxTarget.value !== "fixture";
+  const dmxOn = dom.dmxEnabled.value === "true";
+  dom.dmxColorField.hidden = !dmxOn;
+  dom.dmxDurationField.hidden = !dmxOn;
+}
+
+function openCueDialog(cue = null, initialTimeMs = 0) {
+  if (!selectedCueVideoId) return;
+  dom.cueId.value = cue?.id || "";
+  dom.cueDialogTitle.textContent = cue ? "Edit action" : "Add action";
+  dom.cueTime.value = formatCueTime(cue?.time_ms ?? initialTimeMs);
+  dom.cueType.value = cue?.type || "relay";
+  dom.cueLabel.value = cue?.label || "";
+  dom.relayUrl.value = cue?.type === "relay" ? cue.config.base_url : "http://esp32-relay.local";
+  dom.relayDuration.value = cue?.type === "relay" ? cue.config.duration_ms : 1000;
+  dom.dmxUrl.value = cue?.type === "dmx" ? cue.config.base_url : "http://127.0.0.1:8000";
+  dom.dmxTarget.value = cue?.type === "dmx" ? cue.config.target : "fixture";
+  dom.dmxFixture.value = cue?.type === "dmx" ? (cue.config.fixture_id || 1) : 1;
+  dom.dmxEnabled.value = cue?.type === "dmx" ? String(cue.config.enabled) : "true";
+  dom.dmxColor.value = cue?.type === "dmx" ? cue.config.color : "#ff6a24";
+  dom.dmxDuration.value = cue?.type === "dmx" ? cue.config.duration_ms : 0;
+  updateCueFormVisibility();
+  dom.cueDialog.showModal();
+  dom.cueTime.focus();
+  dom.cueTime.select();
+}
+
+function closeCueDialog() {
+  if (dom.cueDialog.open) dom.cueDialog.close();
+}
+
+async function saveCue(event) {
+  event.preventDefault();
+  if (!selectedCueVideoId) return;
+  try {
+    const actionType = dom.cueType.value;
+    const payload = {
+      time_ms: parseCueTime(dom.cueTime.value),
+      type: actionType,
+      label: dom.cueLabel.value.trim(),
+      config: actionType === "relay"
+        ? {
+            base_url: dom.relayUrl.value.trim(),
+            duration_ms: Number(dom.relayDuration.value),
+          }
+        : {
+            base_url: dom.dmxUrl.value.trim(),
+            target: dom.dmxTarget.value,
+            fixture_id: Number(dom.dmxFixture.value),
+            enabled: dom.dmxEnabled.value === "true",
+            color: dom.dmxColor.value,
+            duration_ms: dom.dmxEnabled.value === "true" ? Number(dom.dmxDuration.value) : 0,
+          },
+    };
+    const cueId = dom.cueId.value;
+    if (cueId) {
+      await api(`/api/cues/${encodeURIComponent(cueId)}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      await api(`/api/videos/${encodeURIComponent(selectedCueVideoId)}/cues`, { method: "POST", body: JSON.stringify(payload) });
+    }
+    closeCueDialog();
+    await loadCues(selectedCueVideoId);
+    showToast(cueId ? "Action updated" : "Action scheduled");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function deleteCue(cue) {
+  if (!window.confirm(`Delete the action at ${formatCueTime(cue.time_ms)}?`)) return;
+  try {
+    await api(`/api/cues/${encodeURIComponent(cue.id)}`, { method: "DELETE" });
+    await loadCues(selectedCueVideoId);
+    showToast("Action deleted");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function testCue(cue) {
+  try {
+    await api(`/api/cues/${encodeURIComponent(cue.id)}/test`, { method: "POST", body: "{}" });
+    showToast("Test action sent");
+  } catch (error) {
+    showToast(error.message, true);
+  }
 }
 
 function renderPlaylist(videos, currentId) {
@@ -197,10 +505,14 @@ function renderPlaylist(videos, currentId) {
     const meta = document.createElement("small");
     meta.textContent = `${formatBytes(video.size_bytes)} · MP4`;
     copy.append(title, meta);
-    copy.addEventListener("click", () => sendControl("play", { video_id: video.id }));
+    copy.addEventListener("click", () => {
+      selectCueVideo(video.id);
+      sendControl("play", { video_id: video.id });
+    });
     copy.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
+        selectCueVideo(video.id);
         sendControl("play", { video_id: video.id });
       }
     });
@@ -329,6 +641,22 @@ dom.fileInput.addEventListener("change", event => uploadFiles(event.target.files
   dom.dropzone.classList.remove("dragging");
 }));
 dom.dropzone.addEventListener("drop", event => uploadFiles(event.dataTransfer.files));
+
+dom.cueVideo.addEventListener("change", event => selectCueVideo(event.target.value));
+dom.addCue.addEventListener("click", () => openCueDialog());
+dom.addCurrentCue.addEventListener("click", () => {
+  const atPlayhead = snapshot?.player?.current_id === selectedCueVideoId ? displayClock.elapsedMs : 0;
+  openCueDialog(null, atPlayhead);
+});
+dom.cueType.addEventListener("change", updateCueFormVisibility);
+dom.dmxTarget.addEventListener("change", updateCueFormVisibility);
+dom.dmxEnabled.addEventListener("change", updateCueFormVisibility);
+dom.cueForm.addEventListener("submit", saveCue);
+dom.cueDialogClose.addEventListener("click", closeCueDialog);
+dom.cueCancel.addEventListener("click", closeCueDialog);
+dom.cueDialog.addEventListener("click", event => {
+  if (event.target === dom.cueDialog) closeCueDialog();
+});
 
 dom.controllerAddress.textContent = window.location.origin;
 requestAnimationFrame(renderTimecode);

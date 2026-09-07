@@ -8,6 +8,7 @@ from pathlib import Path
 
 from flask import Flask
 
+from .actions import ActionDispatcher, CueStore
 from .black_screen import ensure_black_frame
 from .player import MockEngine, PlaybackController, VLCEngine
 from .routes import web
@@ -38,6 +39,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         VLC_FULLSCREEN=_as_bool(os.environ.get("NIGHTREEL_FULLSCREEN"), True),
         VLC_AUDIO_OUTPUT=os.environ.get("NIGHTREEL_AUDIO_OUTPUT", ""),
         VLC_VIDEO_OUTPUT=os.environ.get("NIGHTREEL_VIDEO_OUTPUT", ""),
+        ACTION_TIMEOUT_SECONDS=float(os.environ.get("NIGHTREEL_ACTION_TIMEOUT", "4")),
     )
     if test_config:
         app.config.update(test_config)
@@ -50,6 +52,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         media_dir,
         library_dirs=[library_dir],
     )
+    cue_store = CueStore(data_dir / "cues.json")
 
     injected_engine = app.config.get("PLAYER_ENGINE")
     if injected_engine is not None:
@@ -63,9 +66,24 @@ def create_app(test_config: dict | None = None) -> Flask:
             video_output=str(app.config["VLC_VIDEO_OUTPUT"]),
         )
 
+    injected_dispatcher = app.config.get("ACTION_DISPATCHER")
+    action_dispatcher = (
+        injected_dispatcher
+        if injected_dispatcher is not None
+        else ActionDispatcher(timeout_seconds=float(app.config["ACTION_TIMEOUT_SECONDS"]))
+    )
+
     black_screen_path = ensure_black_frame(data_dir / "black-screen.png")
-    controller = PlaybackController(store, engine, black_screen_path)
+    controller = PlaybackController(
+        store,
+        engine,
+        black_screen_path,
+        cue_store,
+        action_dispatcher,
+    )
     app.extensions["nightreel_store"] = store
+    app.extensions["nightreel_cues"] = cue_store
+    app.extensions["nightreel_actions"] = action_dispatcher
     app.extensions["nightreel_player"] = controller
     app.register_blueprint(web)
 

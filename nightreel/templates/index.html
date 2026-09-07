@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#11100f">
     <meta name="description" content="Control local looped video playback on your Raspberry Pi.">
     <title>Night Reel · Pi video control</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <script src="{{ url_for('static', filename='app.js') }}?v=5" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=6">
+    <script src="{{ url_for('static', filename='app.js') }}?v=6" defer></script>
   </head>
   <body>
     <svg class="icon-library" aria-hidden="true">
@@ -23,6 +23,9 @@
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M8 4h8l1 2h3v2H4V6h3zm-1 6h10l-1 10H8z"/></symbol>
       <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m6.6 15.4 5.4-5.4 5.4 5.4L16 16.8l-4-4-4 4z"/></symbol>
       <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6.6 8.6 5.4 5.4 5.4-5.4L16 7.2l-4 4-4-4z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16.9 3.6 3.5 3.5L9 18.5 4 20l1.5-5zM7.2 15.9l-.5 1.4 1.4-.5 9.5-9.5-.9-.9z"/></symbol>
+      <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13.2 2 5 13h6l-.2 9L19 10h-6z"/></symbol>
     </svg>
 
     <header class="topbar">
@@ -122,7 +125,141 @@
           <p>Uploaded videos appear here and play from top to bottom.</p>
         </div>
       </aside>
+
+      <section class="cue-panel" aria-labelledby="cue-heading">
+        <div class="cue-heading">
+          <div>
+            <p class="eyebrow">Timecode automation</p>
+            <h2 id="cue-heading">Action track</h2>
+            <p class="cue-intro">Trigger relay and DMX actions as playback crosses a cue.</p>
+          </div>
+          <div class="cue-toolbar">
+            <label class="video-selector">
+              <span>Video</span>
+              <select id="cue-video-select" aria-label="Video for action track"></select>
+            </label>
+            <button class="secondary-button" id="add-current-cue" type="button">
+              <svg class="icon"><use href="#i-bolt"></use></svg>
+              At playhead
+            </button>
+            <button class="primary-button" id="add-cue" type="button">
+              <svg class="icon"><use href="#i-plus"></use></svg>
+              Add action
+            </button>
+          </div>
+        </div>
+
+        <div class="cue-track" id="cue-track">
+          <div class="cue-track-meta">
+            <span>TIME</span>
+            <span id="cue-scale-label">00:00:00 — 00:01:00</span>
+          </div>
+          <div class="cue-ruler" id="cue-ruler" aria-label="Scheduled action timeline">
+            <div class="cue-ruler-grid" aria-hidden="true"></div>
+            <div class="cue-playhead" id="cue-playhead" aria-hidden="true"></div>
+            <div class="cue-markers" id="cue-markers"></div>
+          </div>
+        </div>
+
+        <div class="cue-list-heading" aria-hidden="true">
+          <span>Timecode</span><span>Action</span><span>Configuration</span><span>Status</span><span></span>
+        </div>
+        <div class="cue-list" id="cue-list" aria-live="polite"></div>
+        <div class="cue-empty" id="cue-empty">
+          <span class="cue-empty-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
+          <div><strong>No actions scheduled</strong><p>Add a cue and it will fire once when playback crosses its timecode.</p></div>
+        </div>
+      </section>
     </main>
+
+    <dialog class="cue-dialog" id="cue-dialog" aria-labelledby="cue-dialog-title">
+      <form id="cue-form">
+        <input id="cue-id" type="hidden">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Action cue</p>
+            <h2 id="cue-dialog-title">Add action</h2>
+          </div>
+          <button class="dialog-close" id="cue-dialog-close" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div class="form-grid two-columns">
+          <label class="field">
+            <span>Timecode</span>
+            <input id="cue-time" type="text" inputmode="decimal" placeholder="00:00:12.500" required>
+            <small>HH:MM:SS.mmm</small>
+          </label>
+          <label class="field">
+            <span>Action type</span>
+            <select id="cue-type">
+              <option value="relay">ESP32 relay</option>
+              <option value="dmx">DMX light</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Label <em>optional</em></span>
+          <input id="cue-label" type="text" maxlength="80" placeholder="e.g. Door effect">
+        </label>
+
+        <fieldset class="action-fields" id="relay-fields">
+          <legend>ESP32 relay settings</legend>
+          <label class="field">
+            <span>ESP32 service address</span>
+            <input id="relay-url" type="url" placeholder="http://esp32-relay.local" required>
+          </label>
+          <label class="field">
+            <span>Relay duration (ms)</span>
+            <input id="relay-duration" type="number" min="1" max="30000" step="1" value="1000" required>
+            <small>Allowed by the ESP32 service: 1–30,000 ms.</small>
+          </label>
+        </fieldset>
+
+        <fieldset class="action-fields" id="dmx-fields" hidden>
+          <legend>DMX light settings</legend>
+          <label class="field">
+            <span>DMX Desk service address</span>
+            <input id="dmx-url" type="url" placeholder="http://raspberrypi.local:8000">
+          </label>
+          <div class="form-grid two-columns">
+            <label class="field">
+              <span>Target</span>
+              <select id="dmx-target">
+                <option value="fixture">Single fixture</option>
+                <option value="all">All fixtures</option>
+              </select>
+            </label>
+            <label class="field" id="dmx-fixture-field">
+              <span>Fixture ID</span>
+              <input id="dmx-fixture" type="number" min="1" max="512" step="1" value="1">
+            </label>
+          </div>
+          <div class="form-grid three-columns">
+            <label class="field">
+              <span>State</span>
+              <select id="dmx-enabled">
+                <option value="true">Turn on</option>
+                <option value="false">Turn off</option>
+              </select>
+            </label>
+            <label class="field" id="dmx-color-field">
+              <span>Color</span>
+              <input class="color-input" id="dmx-color" type="color" value="#ff6a24">
+            </label>
+            <label class="field" id="dmx-duration-field">
+              <span>Duration (ms)</span>
+              <input id="dmx-duration" type="number" min="0" max="3600000" step="1" value="0">
+              <small>0 keeps the light on.</small>
+            </label>
+          </div>
+        </fieldset>
+
+        <div class="dialog-actions">
+          <button class="secondary-button" id="cue-cancel" type="button">Cancel</button>
+          <button class="primary-button" type="submit">Save action</button>
+        </div>
+      </form>
+    </dialog>
 
     <footer>
       <span>Controller address</span>

@@ -6,6 +6,7 @@ import time
 import pytest
 
 from nightreel import create_app
+from nightreel.actions import ActionDispatcher, CueStore
 from nightreel.player import MockEngine
 from nightreel.storage import PlaylistStore
 
@@ -42,6 +43,8 @@ def test_empty_status_and_health(client):
     assert page.status_code == 200
     assert b"Night Reel" in page.data
     assert b"display-mode-button" in page.data
+    assert b"Action track" in page.data
+    assert b"cue-dialog" in page.data
     assert client.get("/health").get_json() == {"ok": True}
     status = client.get("/api/status").get_json()
     assert status["playlist"] == []
@@ -233,3 +236,224 @@ def test_discovers_all_mp4s_from_both_media_folders(tmp_path):
     (library / "added-while-running.MP4").write_bytes(b"new")
     assert store.refresh(force=True) is True
     assert len(store.list()) == 4
+
+
+def test_cues_can_be_created_updated_deleted_and_reloaded(client, app, tmp_path):
+    video = upload(client, "cue-video.mp4").get_json()["added"][0]
+    created = client.post(
+        f"/api/videos/{video['id']}/cues",
+        json={
+            "time_ms": 12_500,
+            "type": "relay",
+            "label": "Door relay",
+            "config": {
+                "base_url": "http://esp32-relay.local/",
+                "duration_ms": 1500,
+            },
+        },
+    )
+    assert created.status_code == 201
+    cue = created.get_json()["cue"]
+    assert cue["time_ms"] == 12_500
+    assert cue["config"] == {
+        "base_url": "http://esp32-relay.local",
+        "duration_ms": 1500,
+    }
+
+    listed = client.get(f"/api/videos/{video['id']}/cues").get_json()["cues"]
+    assert [item["id"] for item in listed] == [cue["id"]]
+
+    updated = client.put(
+        f"/api/cues/{cue['id']}",
+        json={
+            "time_ms": 9000,
+            "type": "dmx",
+            "label": "Red flash",
+            "config": {
+                "base_url": "http://127.0.0.1:8000",
+                "target": "fixture",
+                "fixture_id": 2,
+                "enabled": True,
+                "color": "#FF2000",
+                "duration_ms": 750,
+            },
+        },
+    ).get_json()["cue"]
+    assert updated["config"]["color"] == "#ff2000"
+    assert CueStore(tmp_path / "cues.json").get(cue["id"]) == updated
+
+    removed = client.delete(f"/api/cues/{cue['id']}")
+    assert removed.status_code == 200
+    assert client.get(f"/api/videos/{video['id']}/cues").get_json()["cues"] == []
+
+
+def test_invalid_action_configuration_is_rejected(client):
+    video = upload(client, "validation.mp4").get_json()["added"][0]
+    bad_duration = client.post(
+        f"/api/videos/{video['id']}/cues",
+        json={
+            "time_ms": 0,
+            "type": "relay",
+            "config": {"base_url": "http://esp32-relay.local", "duration_ms": 30_001},
+        },
+    )
+    assert bad_duration.status_code == 400
+    assert "duration_ms" in bad_duration.get_json()["error"]
+
+    bad_url = client.post(
+        f"/api/videos/{video['id']}/cues",
+        json={
+            "time_ms": 0,
+            "type": "dmx",
+            "config": {
+                "base_url": "not-an-address",
+                "target": "all",
+                "enabled": False,
+                "color": "#ffffff",
+                "duration_ms": 0,
+            },
+        },
+    )
+    assert bad_url.status_code == 400
+
+
+def test_action_dispatcher_uses_existing_relay_and_dmx_apis():
+    dispatcher = ActionDispatcher()
+    requests = []
+    dispatcher._request = lambda url, method, payload: requests.append((url, method, payload)) or {}
+
+    relay_message = dispatcher._execute(
+        {
+            "id": "relay-cue",
+            "type": "relay",
+            "config": {"base_url": "http://relay.local", "duration_ms": 5000},
+        }
+    )
+    dmx_message = dispatcher._execute(
+        {
+            "id": "dmx-cue",
+            "type": "dmx",
+            "config": {
+                "base_url": "http://127.0.0.1:8000",
+                "target": "fixture",
+                "fixture_id": 2,
+                "enabled": True,
+                "color": "#102030",
+                "duration_ms": 0,
+            },
+        }
+    )
+    dmx_all_message = dispatcher._execute(
+        {
+            "id": "dmx-all-cue",
+            "type": "dmx",
+            "config": {
+                "base_url": "http://127.0.0.1:8000",
+                "target": "all",
+                "enabled": False,
+                "color": "#ffffff",
+                "duration_ms": 0,
+            },
+        }
+    )
+    dispatcher.close()
+
+    assert relay_message == "Relay active for 5000 ms"
+    assert dmx_message == "Fixture 2 on"
+    assert dmx_all_message == "All fixtures off"
+    assert requests == [
+        ("http://relay.local/api/relay", "POST", {"duration_ms": 5000}),
+        (
+            "http://127.0.0.1:8000/api/fixtures/2",
+            "PATCH",
+            {"enabled": True, "color": "#102030"},
+        ),
+        ("http://127.0.0.1:8000/api/all", "POST", {"enabled": False}),
+    ]
+
+
+def test_cue_fires_once_per_run_and_rearms_after_stop_or_loop(tmp_path):
+    class ManualEngine(MockEngine):
+        def __init__(self):
+            super().__init__(duration_ms=10_000)
+
+        def elapsed_ms(self):
+            return self._elapsed
+
+    class RecordingDispatcher:
+        def __init__(self):
+            self.dispatched = []
+            self.closed = False
+
+        def dispatch(self, cue):
+            self.dispatched.append(cue["id"])
+
+        def activity(self):
+            return {}
+
+        def close(self):
+            self.closed = True
+
+    def wait_for_count(dispatcher, expected):
+        deadline = time.monotonic() + 1.5
+        while len(dispatcher.dispatched) < expected and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    engine = ManualEngine()
+    dispatcher = RecordingDispatcher()
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": tmp_path,
+            "PLAYER_ENGINE": engine,
+            "ACTION_DISPATCHER": dispatcher,
+        }
+    )
+    client = application.test_client()
+    video = upload(client, "timed-action.mp4").get_json()["added"][0]
+    cue = client.post(
+        f"/api/videos/{video['id']}/cues",
+        json={
+            "time_ms": 500,
+            "type": "relay",
+            "label": "Once",
+            "config": {"base_url": "http://relay.local", "duration_ms": 100},
+        },
+    ).get_json()["cue"]
+
+    client.post("/api/control", json={"action": "play", "video_id": video["id"]})
+    engine._elapsed = 600
+    wait_for_count(dispatcher, 1)
+    assert dispatcher.dispatched == [cue["id"]]
+    time.sleep(0.3)
+    assert dispatcher.dispatched == [cue["id"]]
+
+    client.post("/api/control", json={"action": "stop"})
+    client.post("/api/control", json={"action": "play", "video_id": video["id"]})
+    engine._elapsed = 600
+    wait_for_count(dispatcher, 2)
+    assert dispatcher.dispatched == [cue["id"], cue["id"]]
+
+    engine._elapsed = engine._duration
+    engine._state = "ended"
+    time.sleep(0.35)
+    assert engine.state() == "playing"
+    engine._elapsed = 600
+    wait_for_count(dispatcher, 3)
+    assert dispatcher.dispatched == [cue["id"], cue["id"], cue["id"]]
+    application.extensions["nightreel_player"].shutdown()
+    assert dispatcher.closed is True
+
+
+def test_deleting_video_also_deletes_its_cues(client):
+    video = upload(client, "temporary.mp4").get_json()["added"][0]
+    client.post(
+        f"/api/videos/{video['id']}/cues",
+        json={
+            "time_ms": 1000,
+            "type": "relay",
+            "config": {"base_url": "http://relay.local", "duration_ms": 100},
+        },
+    )
+    client.delete(f"/api/videos/{video['id']}")
+    assert client.get(f"/api/videos/{video['id']}/cues").status_code == 404

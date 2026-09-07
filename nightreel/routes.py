@@ -5,6 +5,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, jsonify, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
 
+from .actions import CueError, CueStore
 from .player import PlaybackController, PlaybackError
 from .storage import PlaylistError
 
@@ -13,6 +14,10 @@ web = Blueprint("web", __name__)
 
 def player() -> PlaybackController:
     return current_app.extensions["nightreel_player"]
+
+
+def cues() -> CueStore:
+    return current_app.extensions["nightreel_cues"]
 
 
 @web.after_app_request
@@ -93,8 +98,43 @@ def reorder_playlist():
     return jsonify(player().reorder(ordered_ids))
 
 
+@web.get("/api/videos/<video_id>/cues")
+def list_cues(video_id: str):
+    if player().store.get(video_id) is None:
+        raise CueError("Video not found")
+    return jsonify(cues=cues().list_for(video_id))
+
+
+@web.post("/api/videos/<video_id>/cues")
+def create_cue(video_id: str):
+    if player().store.get(video_id) is None:
+        raise CueError("Video not found")
+    cue = cues().add(video_id, request.get_json(silent=True))
+    return jsonify(cue=cue), 201
+
+
+@web.put("/api/cues/<cue_id>")
+def update_cue(cue_id: str):
+    return jsonify(cue=cues().update(cue_id, request.get_json(silent=True)))
+
+
+@web.delete("/api/cues/<cue_id>")
+def delete_cue(cue_id: str):
+    return jsonify(removed=cues().remove(cue_id))
+
+
+@web.post("/api/cues/<cue_id>/test")
+def test_cue(cue_id: str):
+    cue = cues().get(cue_id)
+    if cue is None:
+        raise CueError("Cue not found")
+    player().action_dispatcher.dispatch(cue)
+    return jsonify(ok=True), 202
+
+
 @web.app_errorhandler(PlaylistError)
 @web.app_errorhandler(PlaybackError)
+@web.app_errorhandler(CueError)
 def handle_expected_error(error):
     return jsonify(error=str(error)), 404 if "not found" in str(error).lower() else 400
 

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 
+from .actions import ActionDispatcher, CueStore
 from .storage import PlaylistError, PlaylistStore
 
 
@@ -209,9 +210,13 @@ class PlaybackController:
         store: PlaylistStore,
         engine: PlaybackEngine,
         black_screen_path: Path,
+        cue_store: CueStore,
+        action_dispatcher: ActionDispatcher,
     ) -> None:
         self.store = store
         self.engine = engine
+        self.cue_store = cue_store
+        self.action_dispatcher = action_dispatcher
         self._lock = threading.RLock()
         self._current_id: str | None = None
         self._loaded_id: str | None = None
@@ -220,6 +225,9 @@ class PlaybackController:
         self._clock_started_at: float | None = None
         self._black_screen_path = Path(black_screen_path)
         self._black_screen = False
+        self._cue_video_id: str | None = None
+        self._cue_previous_ms = -1
+        self._fired_cues: set[str] = set()
         self._closing = threading.Event()
         self._monitor = threading.Thread(
             target=self._monitor_playback,
@@ -259,6 +267,7 @@ class PlaybackController:
                     "error": self._last_error,
                 },
                 "playlist": videos,
+                "cue_activity": self.action_dispatcher.activity(),
             }
 
     def play(self, video_id: str | None = None) -> dict:
@@ -283,6 +292,7 @@ class PlaybackController:
                 self._loaded_id = target_id
                 self._clock_elapsed_ms = 0
                 self._clock_started_at = None
+                self._reset_cues_locked(target_id)
             self._current_id = target_id
             self._last_error = None
             self.engine.play()
@@ -308,6 +318,7 @@ class PlaybackController:
             self._black_screen = False
             self._clock_elapsed_ms = 0
             self._clock_started_at = None
+            self._reset_cues_locked(self._current_id)
             return self.status()
 
     def next(self) -> dict:
@@ -324,6 +335,7 @@ class PlaybackController:
                 and self.engine.state() in {"playing", "loading", "paused"}
             )
             _, removed_index = self.store.remove(video_id)
+            self.cue_store.remove_for_video(video_id)
             remaining = self.store.list()
             if was_active:
                 self.engine.stop()
@@ -332,6 +344,7 @@ class PlaybackController:
                 self._clock_elapsed_ms = 0
                 self._clock_started_at = None
                 self._black_screen = False
+                self._reset_cues_locked(None)
                 if remaining:
                     next_index = min(removed_index, len(remaining) - 1)
                     self._current_id = remaining[next_index]["id"]
@@ -363,6 +376,7 @@ class PlaybackController:
             self._clock_elapsed_ms = 0
             self._clock_started_at = None
             self._last_error = None
+            self._reset_cues_locked(None)
             return self.status()
 
     def shutdown(self) -> None:
@@ -371,6 +385,7 @@ class PlaybackController:
         self._closing.set()
         with self._lock:
             self.engine.close()
+            self.action_dispatcher.close()
 
     def _advance_locked(self) -> None:
         videos = self.store.list()
@@ -390,12 +405,40 @@ class PlaybackController:
             elapsed += int((time.monotonic() - self._clock_started_at) * 1000)
         return max(0, elapsed)
 
+    def _effective_elapsed_locked(self, state: str) -> int:
+        engine_elapsed = self.engine.elapsed_ms()
+        fallback_elapsed = self._clock_value(state)
+        duration = self.engine.duration_ms()
+        elapsed = max(engine_elapsed, fallback_elapsed)
+        return min(elapsed, duration) if duration else elapsed
+
+    def _reset_cues_locked(self, video_id: str | None) -> None:
+        self._cue_video_id = video_id
+        self._cue_previous_ms = -1
+        self._fired_cues.clear()
+
+    def _process_cues_locked(self, elapsed_ms: int) -> None:
+        if not self._loaded_id:
+            return
+        if self._cue_video_id != self._loaded_id or elapsed_ms + 500 < self._cue_previous_ms:
+            self._reset_cues_locked(self._loaded_id)
+
+        for cue in self.cue_store.list_for(self._loaded_id):
+            if cue["id"] in self._fired_cues:
+                continue
+            if self._cue_previous_ms < cue["time_ms"] <= elapsed_ms:
+                self._fired_cues.add(cue["id"])
+                self.action_dispatcher.dispatch(cue)
+        self._cue_previous_ms = elapsed_ms
+
     def _monitor_playback(self) -> None:
         while not self._closing.wait(0.25):
             with self._lock:
                 if not self._loaded_id:
                     continue
                 state = self.engine.state()
+                if state in {"playing", "loading", "ended"}:
+                    self._process_cues_locked(self._effective_elapsed_locked(state))
                 if state == "ended":
                     try:
                         self._advance_locked()
