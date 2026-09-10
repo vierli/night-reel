@@ -1,0 +1,20 @@
+{
+  "fixtures": [
+    {
+      "id": 1,
+      "name": "Scheinwerfer links",
+      "address": 1,
+      "channels": { "dimmer": 0, "red": 1, "green": 2, "blue": 3 },
+      "fixed_channels": { "4": 0, "5": 0, "6": 0 },
+      "dimmer_on": 255
+    },
+    {
+      "id": 2,
+      "name": "Scheinwerfer rechts",
+      "address": 8,
+      "channels": { "dimmer": 0, "red": 1, "green": 2, "blue": 3 },
+      "fixed_channels": { "4": 0, "5": 0, "6": 0 },
+      "dimmer_on": 255
+    }
+  ]
+}

@@ -10,6 +10,7 @@ const dom = {
   duration: document.querySelector("#duration-time"),
   timelineFill: document.querySelector("#timeline-fill"),
   timelineStatus: document.querySelector("#timeline-status"),
+  loopStatus: document.querySelector("#loop-status"),
   play: document.querySelector("#play-button"),
   pause: document.querySelector("#pause-button"),
   stop: document.querySelector("#stop-button"),
@@ -48,13 +49,15 @@ const dom = {
   relayUrl: document.querySelector("#relay-url"),
   relayDuration: document.querySelector("#relay-duration"),
   dmxFields: document.querySelector("#dmx-fields"),
-  dmxUrl: document.querySelector("#dmx-url"),
+  dmxStatus: document.querySelector("#dmx-status"),
   dmxTarget: document.querySelector("#dmx-target"),
   dmxFixtureField: document.querySelector("#dmx-fixture-field"),
   dmxFixture: document.querySelector("#dmx-fixture"),
   dmxEnabled: document.querySelector("#dmx-enabled"),
   dmxColorField: document.querySelector("#dmx-color-field"),
   dmxColor: document.querySelector("#dmx-color"),
+  dmxDurationSettings: document.querySelector("#dmx-duration-settings"),
+  dmxDurationMode: document.querySelector("#dmx-duration-mode"),
   dmxDurationField: document.querySelector("#dmx-duration-field"),
   dmxDuration: document.querySelector("#dmx-duration"),
   audioDevice: document.querySelector("#audio-device"),
@@ -74,6 +77,7 @@ let selectedCueVideoId = null;
 let cueItems = [];
 let cueLoadToken = 0;
 let audioDevicesKey = "";
+let dmxFixturesKey = "";
 let displayClock = {
   currentId: null,
   elapsedMs: 0,
@@ -186,12 +190,14 @@ function applyStatus(data) {
   dom.backend.textContent = player.backend === "mock" ? "Demo playback engine" : "VLC playback engine";
 
   const hasVideos = data.playlist.length > 0;
-  dom.play.disabled = !hasVideos || commandPending;
+  const hasLoopVideos = data.playlist.some(video => video.loop_enabled);
+  const activeVideoCanResume = Boolean(current) && ["playing", "loading", "paused"].includes(state);
+  dom.play.disabled = ((!hasLoopVideos && !activeVideoCanResume) || commandPending);
   dom.pause.disabled = state !== "playing" || commandPending;
   dom.stop.disabled = (((!current || state === "stopped") && !blackScreenActive) || commandPending);
   dom.displayMode.disabled = commandPending;
   dom.blackScreen.disabled = commandPending;
-  dom.next.disabled = !hasVideos || commandPending;
+  dom.next.disabled = !hasLoopVideos || commandPending;
   dom.play.querySelector("span").textContent = state === "paused" ? "Resume" : "Start";
   dom.displayMode.querySelector("span").textContent = player.fullscreen ? "Windowed" : "Fullscreen";
   dom.displayModeIcon.setAttribute("href", player.fullscreen ? "#i-windowed" : "#i-fullscreen");
@@ -201,12 +207,44 @@ function applyStatus(data) {
   );
   dom.blackScreen.querySelector("span").textContent = blackScreenActive ? "Exit black" : "Black screen";
   dom.blackScreen.setAttribute("aria-pressed", String(blackScreenActive));
+  dom.loopStatus.replaceChildren(
+    icon("i-loop"),
+    document.createTextNode(hasLoopVideos ? `${player.loop_count} in loop` : "Loop empty"),
+  );
   renderAudioControls(player.audio);
+  renderDmxStatus(data.dmx);
 
   if (player.error) showToast(player.error, true);
   renderPlaylist(data.playlist, player.current_id);
   syncCueVideoOptions(data.playlist, player.current_id);
   renderCueTrack();
+}
+
+function renderDmxStatus(dmx) {
+  if (!dmx) return;
+  const fixtures = dmx.universe?.fixtures || [];
+  const fixtureKey = fixtures.map(fixture => `${fixture.id}:${fixture.name}`).join("|");
+  if (fixtureKey !== dmxFixturesKey) {
+    const selected = dom.dmxFixture.value;
+    dmxFixturesKey = fixtureKey;
+    dom.dmxFixture.replaceChildren();
+    fixtures.forEach(fixture => {
+      const option = document.createElement("option");
+      option.value = String(fixture.id);
+      option.textContent = `${fixture.name} · address ${fixture.address}`;
+      dom.dmxFixture.append(option);
+    });
+    if (fixtures.some(fixture => String(fixture.id) === selected)) {
+      dom.dmxFixture.value = selected;
+    }
+  }
+  const ready = dmx.connected || dmx.mode === "simulation";
+  dom.dmxStatus.className = `dmx-inline-status ${ready ? "online" : "offline"}`;
+  dom.dmxStatus.querySelector("span").textContent = dmx.mode === "simulation"
+    ? "Integrated DMX simulation"
+    : dmx.connected
+      ? `Integrated DMX online · ${dmx.port}`
+      : `DMX offline · ${dmx.last_error || dmx.port}`;
 }
 
 function renderAudioControls(audio) {
@@ -346,8 +384,12 @@ function cueSummary(cue) {
   }
   const target = config.target === "all" ? "All fixtures" : `Fixture ${config.fixture_id}`;
   const state = config.enabled ? `On · ${config.color.toUpperCase()}` : "Off";
-  const duration = config.enabled && config.duration_ms ? ` · ${config.duration_ms.toLocaleString()} ms` : "";
-  return `${target} · ${state}${duration} · ${config.base_url}`;
+  const duration = config.enabled
+    ? config.duration_ms
+      ? ` · ${config.duration_ms.toLocaleString()} ms`
+      : " · Until next change"
+    : "";
+  return `${target} · ${state}${duration}`;
 }
 
 function renderCueTrack() {
@@ -424,12 +466,13 @@ function updateCueFormVisibility() {
   dom.dmxFields.hidden = isRelay;
   dom.relayUrl.required = isRelay;
   dom.relayDuration.required = isRelay;
-  dom.dmxUrl.required = !isRelay;
   dom.dmxFixture.required = !isRelay && dom.dmxTarget.value === "fixture";
   dom.dmxFixtureField.hidden = dom.dmxTarget.value !== "fixture";
   const dmxOn = dom.dmxEnabled.value === "true";
   dom.dmxColorField.hidden = !dmxOn;
-  dom.dmxDurationField.hidden = !dmxOn;
+  dom.dmxDurationSettings.hidden = !dmxOn;
+  dom.dmxDurationField.hidden = !dmxOn || dom.dmxDurationMode.value !== "timed";
+  dom.dmxDuration.required = !isRelay && dmxOn && dom.dmxDurationMode.value === "timed";
 }
 
 function openCueDialog(cue = null, initialTimeMs = 0) {
@@ -441,12 +484,13 @@ function openCueDialog(cue = null, initialTimeMs = 0) {
   dom.cueLabel.value = cue?.label || "";
   dom.relayUrl.value = cue?.type === "relay" ? cue.config.base_url : "http://esp32-relay.local";
   dom.relayDuration.value = cue?.type === "relay" ? cue.config.duration_ms : 1000;
-  dom.dmxUrl.value = cue?.type === "dmx" ? cue.config.base_url : "http://127.0.0.1:8000";
   dom.dmxTarget.value = cue?.type === "dmx" ? cue.config.target : "fixture";
   dom.dmxFixture.value = cue?.type === "dmx" ? (cue.config.fixture_id || 1) : 1;
   dom.dmxEnabled.value = cue?.type === "dmx" ? String(cue.config.enabled) : "true";
   dom.dmxColor.value = cue?.type === "dmx" ? cue.config.color : "#ff6a24";
-  dom.dmxDuration.value = cue?.type === "dmx" ? cue.config.duration_ms : 0;
+  const dmxDuration = cue?.type === "dmx" ? cue.config.duration_ms : 0;
+  dom.dmxDurationMode.value = dmxDuration > 0 ? "timed" : "unlimited";
+  dom.dmxDuration.value = dmxDuration > 0 ? dmxDuration : 1000;
   updateCueFormVisibility();
   dom.cueDialog.showModal();
   dom.cueTime.focus();
@@ -472,12 +516,13 @@ async function saveCue(event) {
             duration_ms: Number(dom.relayDuration.value),
           }
         : {
-            base_url: dom.dmxUrl.value.trim(),
             target: dom.dmxTarget.value,
             fixture_id: Number(dom.dmxFixture.value),
             enabled: dom.dmxEnabled.value === "true",
             color: dom.dmxColor.value,
-            duration_ms: dom.dmxEnabled.value === "true" ? Number(dom.dmxDuration.value) : 0,
+            duration_ms: dom.dmxEnabled.value === "true" && dom.dmxDurationMode.value === "timed"
+              ? Number(dom.dmxDuration.value)
+              : 0,
           },
     };
     const cueId = dom.cueId.value;
@@ -515,20 +560,29 @@ async function testCue(cue) {
 }
 
 function renderPlaylist(videos, currentId) {
-  const key = `${currentId || ""}:${videos.map(item => item.id).join(",")}`;
+  const key = `${currentId || ""}:${videos.map(item => `${item.id}:${item.loop_enabled}`).join(",")}`;
   if (key === renderedPlaylistKey) return;
   renderedPlaylistKey = key;
   dom.list.replaceChildren();
-  dom.count.textContent = `${videos.length} ${videos.length === 1 ? "video" : "videos"}`;
+  const loopCount = videos.filter(video => video.loop_enabled).length;
+  dom.count.textContent = `${loopCount}/${videos.length} in loop`;
   dom.empty.hidden = videos.length > 0;
 
   videos.forEach((video, index) => {
     const row = document.createElement("article");
-    row.className = `queue-item${video.id === currentId ? " current" : ""}`;
+    row.className = `queue-item${video.id === currentId ? " current" : ""}${video.loop_enabled ? "" : " loop-disabled"}`;
 
-    const number = document.createElement("span");
-    number.className = "queue-number";
-    number.textContent = String(index + 1).padStart(2, "0");
+    const loopToggle = document.createElement("button");
+    loopToggle.type = "button";
+    loopToggle.className = "loop-toggle";
+    loopToggle.setAttribute("aria-pressed", String(video.loop_enabled));
+    loopToggle.setAttribute(
+      "aria-label",
+      video.loop_enabled ? `Remove ${video.name} from loop` : `Add ${video.name} to loop`,
+    );
+    loopToggle.title = video.loop_enabled ? "Included in loop" : "Not included in loop";
+    loopToggle.append(icon("i-loop"));
+    loopToggle.addEventListener("click", () => toggleVideoLoop(video));
 
     const copy = document.createElement("div");
     copy.className = "queue-copy";
@@ -538,7 +592,7 @@ function renderPlaylist(videos, currentId) {
     const title = document.createElement("strong");
     title.textContent = video.name;
     const meta = document.createElement("small");
-    meta.textContent = `${formatBytes(video.size_bytes)} · MP4`;
+    meta.textContent = `${String(index + 1).padStart(2, "0")} · ${formatBytes(video.size_bytes)} · ${video.loop_enabled ? "In loop" : "Not in loop"}`;
     copy.append(title, meta);
     copy.addEventListener("click", () => {
       selectCueVideo(video.id);
@@ -560,7 +614,7 @@ function renderPlaylist(videos, currentId) {
     up.disabled = index === 0;
     down.disabled = index === videos.length - 1;
     actions.append(up, down, remove);
-    row.append(number, copy, actions);
+    row.append(loopToggle, copy, actions);
     dom.list.append(row);
   });
 }
@@ -599,6 +653,20 @@ async function moveVideo(index, offset) {
   try {
     renderedPlaylistKey = "";
     applyStatus(await api("/api/playlist/order", { method: "PUT", body: JSON.stringify({ ordered_ids: ids }) }));
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function toggleVideoLoop(video) {
+  try {
+    renderedPlaylistKey = "";
+    const data = await api(`/api/videos/${encodeURIComponent(video.id)}/loop`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: !video.loop_enabled }),
+    });
+    applyStatus(data);
+    showToast(video.loop_enabled ? `${video.name} removed from loop` : `${video.name} added to loop`);
   } catch (error) {
     showToast(error.message, true);
   }
@@ -698,6 +766,7 @@ dom.addCurrentCue.addEventListener("click", () => {
 dom.cueType.addEventListener("change", updateCueFormVisibility);
 dom.dmxTarget.addEventListener("change", updateCueFormVisibility);
 dom.dmxEnabled.addEventListener("change", updateCueFormVisibility);
+dom.dmxDurationMode.addEventListener("change", updateCueFormVisibility);
 dom.cueForm.addEventListener("submit", saveCue);
 dom.cueDialogClose.addEventListener("click", closeCueDialog);
 dom.cueCancel.addEventListener("click", closeCueDialog);

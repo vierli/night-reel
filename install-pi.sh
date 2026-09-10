@@ -14,9 +14,20 @@ if [[ "$PROJECT_DIR" == *" "* ]]; then
   exit 1
 fi
 
-echo "Installing VLC and Python support..."
+echo "Installing VLC, Python, and integrated DMX support..."
 sudo apt-get update
 sudo apt-get install -y vlc python3-venv
+
+NEEDS_RELOGIN=0
+if ! id -nG | tr ' ' '\n' | grep -qx dialout; then
+  sudo usermod -aG dialout "$(id -un)"
+  NEEDS_RELOGIN=1
+fi
+
+if systemctl list-unit-files --type=service | grep -q '^dmx-controller.service'; then
+  echo "Disabling the separate DMX controller service; Night Reel now owns the UART..."
+  sudo systemctl disable --now dmx-controller.service
+fi
 
 echo "Creating the Night Reel environment..."
 python3 -m venv "$VENV_DIR"
@@ -34,9 +45,13 @@ sed \
 
 systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true
 systemctl --user daemon-reload
-systemctl --user enable --now nightreel.service
+systemctl --user enable nightreel.service
+systemctl --user restart nightreel.service
 
 PI_IP="$(hostname -I | awk '{print $1}')"
 echo
 echo "Night Reel is running. Open http://${PI_IP:-raspberrypi.local}:8080"
 echo "Service status: systemctl --user status nightreel"
+if [[ "$NEEDS_RELOGIN" -eq 1 ]]; then
+  echo "IMPORTANT: Reboot once so Night Reel receives permission to use /dev/ttyAMA0."
+fi

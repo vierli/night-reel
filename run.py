@@ -23,7 +23,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    config = {"PLAYER_BACKEND": "mock"} if args.mock_player else None
+    config = (
+        {"PLAYER_BACKEND": "mock", "DMX_SIMULATION": True}
+        if args.mock_player
+        else None
+    )
     app = create_app(config)
     print(f"Night Reel is available at http://{args.host}:{args.port}", flush=True)
     serve(app, host=args.host, port=args.port, threads=6)
@@ -31,4 +35,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#11100f">
     <meta name="description" content="Control local looped video playback on your Raspberry Pi.">
     <title>Night Reel · Pi video control</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=7">
-    <script src="{{ url_for('static', filename='app.js') }}?v=7" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=8">
+    <script src="{{ url_for('static', filename='app.js') }}?v=8" defer></script>
   </head>
   <body>
     <svg class="icon-library" aria-hidden="true">
@@ -71,7 +71,7 @@
         </div>
         <div class="timeline-meta">
           <span id="timeline-status">Waiting for a video</span>
-          <span><svg class="icon"><use href="#i-loop"></use></svg> Loop on</span>
+          <span id="loop-status"><svg class="icon"><use href="#i-loop"></use></svg> Loop empty</span>
         </div>
 
         <div class="transport" aria-label="Playback controls">
@@ -121,7 +121,7 @@
       <aside class="queue-panel" aria-labelledby="queue-heading">
         <div class="queue-heading">
           <div>
-            <p class="eyebrow">Continuous playback</p>
+            <p class="eyebrow">Media &amp; continuous playback</p>
             <h2 id="queue-heading">Loop queue</h2>
           </div>
           <span class="count-badge" id="queue-count">0 videos</span>
@@ -236,10 +236,7 @@
 
         <fieldset class="action-fields" id="dmx-fields" hidden>
           <legend>DMX light settings</legend>
-          <label class="field">
-            <span>DMX Desk service address</span>
-            <input id="dmx-url" type="url" placeholder="http://raspberrypi.local:8000">
-          </label>
+          <p class="dmx-inline-status" id="dmx-status"><i></i><span>Checking integrated DMX output…</span></p>
           <div class="form-grid two-columns">
             <label class="field">
               <span>Target</span>
@@ -249,11 +246,11 @@
               </select>
             </label>
             <label class="field" id="dmx-fixture-field">
-              <span>Fixture ID</span>
-              <input id="dmx-fixture" type="number" min="1" max="512" step="1" value="1">
+              <span>Fixture</span>
+              <select id="dmx-fixture"></select>
             </label>
           </div>
-          <div class="form-grid three-columns">
+          <div class="form-grid two-columns">
             <label class="field">
               <span>State</span>
               <select id="dmx-enabled">
@@ -265,10 +262,18 @@
               <span>Color</span>
               <input class="color-input" id="dmx-color" type="color" value="#ff6a24">
             </label>
+          </div>
+          <div class="form-grid two-columns" id="dmx-duration-settings">
+            <label class="field">
+              <span>Duration</span>
+              <select id="dmx-duration-mode">
+                <option value="unlimited">Until next change</option>
+                <option value="timed">Timed</option>
+              </select>
+            </label>
             <label class="field" id="dmx-duration-field">
-              <span>Duration (ms)</span>
-              <input id="dmx-duration" type="number" min="0" max="3600000" step="1" value="0">
-              <small>0 keeps the light on.</small>
+              <span>Timed duration (ms)</span>
+              <input id="dmx-duration" type="number" min="1" max="3600000" step="1" value="1000">
             </label>
           </div>
         </fieldset>

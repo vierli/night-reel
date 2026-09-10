@@ -371,7 +371,18 @@ class PlaybackController:
     def status(self) -> dict:
         with self._lock:
             videos = self.store.list()
+            loop_videos = [video for video in videos if video.get("loop_enabled", True)]
             current = self.store.get(self._current_id)
+            dmx_status = (
+                self.action_dispatcher.dmx_status()
+                if hasattr(self.action_dispatcher, "dmx_status")
+                else {
+                    "connected": False,
+                    "mode": "unavailable",
+                    "last_error": "DMX status is unavailable",
+                    "universe": {"blackout": False, "fixtures": []},
+                }
+            )
             if self._black_screen:
                 state = "black"
                 engine_elapsed = 0
@@ -403,12 +414,14 @@ class PlaybackController:
                             *self.engine.audio_devices(),
                         ],
                     },
-                    "loop": True,
+                    "loop": bool(loop_videos),
+                    "loop_count": len(loop_videos),
                     "backend": self.engine.backend_name,
                     "error": self._last_error,
                 },
                 "playlist": videos,
                 "cue_activity": self.action_dispatcher.activity(),
+                "dmx": dmx_status,
             }
 
     def play(self, video_id: str | None = None) -> dict:
@@ -417,12 +430,22 @@ class PlaybackController:
             if not videos:
                 raise PlaybackError("Upload an MP4 before starting playback")
 
-            target_id = video_id or self._current_id or videos[0]["id"]
+            loop_ids = [video["id"] for video in videos if video.get("loop_enabled", True)]
+            engine_state = self.engine.state() if self._loaded_id else "stopped"
+            if video_id is not None:
+                target_id = video_id
+            elif self._current_id and engine_state in {"playing", "loading", "paused"}:
+                target_id = self._current_id
+            elif self._current_id in loop_ids:
+                target_id = self._current_id
+            elif loop_ids:
+                target_id = loop_ids[0]
+            else:
+                raise PlaybackError("Select at least one video for the loop")
             if not self.store.get(target_id):
                 raise PlaybackError("Video not found")
 
             self._black_screen = False
-            engine_state = self.engine.state() if self._loaded_id else "stopped"
             should_load = self._loaded_id != target_id or engine_state in {
                 "stopped",
                 "ended",
@@ -467,6 +490,11 @@ class PlaybackController:
             self._advance_locked()
             return self.status()
 
+    def set_video_loop(self, video_id: str, enabled: bool) -> dict:
+        with self._lock:
+            self.store.set_loop_enabled(video_id, enabled)
+            return self.status()
+
     def remove_video(self, video_id: str) -> dict:
         with self._lock:
             was_active = self._current_id == video_id
@@ -487,10 +515,20 @@ class PlaybackController:
                 self._black_screen = False
                 self._reset_cues_locked(None)
                 if remaining:
-                    next_index = min(removed_index, len(remaining) - 1)
-                    self._current_id = remaining[next_index]["id"]
                     if was_playing:
-                        self.play(self._current_id)
+                        loop_remaining = [
+                            video for video in remaining if video.get("loop_enabled", True)
+                        ]
+                        if loop_remaining:
+                            self.play(loop_remaining[0]["id"])
+                        else:
+                            self._current_id = remaining[
+                                min(removed_index, len(remaining) - 1)
+                            ]["id"]
+                    else:
+                        self._current_id = remaining[
+                            min(removed_index, len(remaining) - 1)
+                        ]["id"]
             return self.status()
 
     def reorder(self, ordered_ids: list[str]) -> dict:
@@ -543,15 +581,33 @@ class PlaybackController:
             self.engine.close()
             self.action_dispatcher.close()
 
-    def _advance_locked(self) -> None:
-        videos = self.store.list()
-        if not videos:
-            raise PlaybackError("The playlist is empty")
-        ids = [item["id"] for item in videos]
-        if self._current_id in ids:
-            target = ids[(ids.index(self._current_id) + 1) % len(ids)]
+    def _advance_locked(self, *, stop_if_empty: bool = False) -> None:
+        all_videos = self.store.list()
+        loop_videos = [
+            video for video in all_videos if video.get("loop_enabled", True)
+        ]
+        if not loop_videos:
+            if not stop_if_empty:
+                raise PlaybackError("Select at least one video for the loop")
+            self.engine.stop()
+            self._loaded_id = None
+            self._clock_elapsed_ms = 0
+            self._clock_started_at = None
+            self._reset_cues_locked(None)
+            return
+        all_ids = [video["id"] for video in all_videos]
+        if self._current_id in all_ids:
+            current_index = all_ids.index(self._current_id)
+            ordered_after_current = (
+                all_videos[current_index + 1 :] + all_videos[: current_index + 1]
+            )
+            target = next(
+                video["id"]
+                for video in ordered_after_current
+                if video.get("loop_enabled", True)
+            )
         else:
-            target = ids[0]
+            target = loop_videos[0]["id"]
         self._loaded_id = None
         self.play(target)
 
@@ -599,7 +655,7 @@ class PlaybackController:
                     self._process_cues_locked(self._effective_elapsed_locked(state))
                 if state == "ended":
                     try:
-                        self._advance_locked()
+                        self._advance_locked(stop_if_empty=True)
                     except (PlaybackError, PlaylistError, OSError) as exc:
                         self._last_error = str(exc)
                 elif state == "error":

@@ -353,6 +353,22 @@ h1, .queue-heading h2 { margin-bottom: 0; font-size: clamp(24px, 3vw, 34px); lin
 .queue-item.current { border-color: rgb(255 106 36 / 65%); background: rgb(255 106 36 / 7%); }
 .queue-number { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); background: #2a2723; font: 600 11px "SFMono-Regular", Consolas, monospace; }
 .current .queue-number { color: #221108; background: var(--orange); }
+.loop-toggle {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #454038;
+  border-radius: 8px;
+  color: #777066;
+  background: #2a2723;
+  cursor: pointer;
+}
+.loop-toggle .icon { width: 15px; height: 15px; }
+.loop-toggle[aria-pressed="true"] { color: #172009; border-color: var(--green); background: var(--green); }
+.loop-toggle:hover { border-color: var(--orange); }
+.queue-item.loop-disabled .queue-copy { opacity: .52; }
 .queue-copy { min-width: 0; cursor: pointer; }
 .queue-copy strong, .queue-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queue-copy strong { margin-bottom: 4px; font-size: 13px; }
@@ -508,6 +524,12 @@ select { padding: 0 36px 0 12px; }
 .action-fields { margin: 6px 0 0; padding: 18px 18px 3px; border: 1px solid var(--line); border-radius: 12px; }
 .action-fields[hidden] { display: none; }
 .action-fields legend { padding: 0 8px; color: var(--orange-soft); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.form-grid[hidden] { display: none; }
+.dmx-inline-status { margin: 0 0 15px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.dmx-inline-status i { width: 7px; height: 7px; border-radius: 50%; background: #625c54; }
+.dmx-inline-status.online i { background: var(--green); box-shadow: 0 0 0 4px rgb(185 232 106 / 9%); }
+.dmx-inline-status.offline { color: var(--danger); }
+.dmx-inline-status.offline i { background: var(--danger); }
 .dialog-actions { margin-top: 22px; display: flex; justify-content: flex-end; gap: 9px; }
 
 .empty-state { min-height: 230px; padding: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); }

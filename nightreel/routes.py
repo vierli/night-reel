@@ -106,6 +106,15 @@ def delete_video(video_id: str):
     return jsonify(player().remove_video(video_id))
 
 
+@web.patch("/api/videos/<video_id>/loop")
+def set_video_loop(video_id: str):
+    payload = request.get_json(silent=True) or {}
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        return jsonify(error="enabled must be true or false"), 400
+    return jsonify(player().set_video_loop(video_id, enabled))
+
+
 @web.put("/api/playlist/order")
 def reorder_playlist():
     payload = request.get_json(silent=True) or {}

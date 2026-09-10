@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from .dmx import DMXError, DMXRuntime
+
 
 class CueError(RuntimeError):
     """A cue could not be created, updated, or executed."""
@@ -73,7 +75,6 @@ def _normalize_config(action_type: str, raw: Any) -> dict[str, Any]:
         if not isinstance(enabled, bool):
             raise CueError("enabled must be true or false")
         config: dict[str, Any] = {
-            "base_url": _base_url(raw.get("base_url")),
             "target": target,
             "enabled": enabled,
             "color": _color(raw.get("color", "#ffffff")),
@@ -204,14 +205,22 @@ class CueStore:
 
 
 class ActionDispatcher:
-    """Runs cue network requests without blocking VLC's playback monitor."""
+    """Runs relay and integrated DMX cues outside VLC's playback monitor."""
 
-    def __init__(self, timeout_seconds: float = 4.0) -> None:
+    def __init__(
+        self, timeout_seconds: float = 4.0, dmx_runtime: DMXRuntime | None = None
+    ) -> None:
         self.timeout_seconds = timeout_seconds
-        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="nightreel-cue")
+        self.dmx_runtime = dmx_runtime
+        self._relay_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="nightreel-relay"
+        )
+        # A single worker preserves the order of DMX changes at adjacent timecodes.
+        self._dmx_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="nightreel-dmx-cue"
+        )
         self._lock = threading.RLock()
         self._activity: dict[str, dict] = {}
-        self._timers: set[threading.Timer] = set()
         self._closed = False
 
     def dispatch(self, cue: dict) -> None:
@@ -223,8 +232,11 @@ class ActionDispatcher:
                 "message": "Sending action…",
                 "updated_at": _timestamp(),
             }
-        future = self._executor.submit(self._execute, cue)
-        future.add_done_callback(lambda completed, cue_id=cue["id"]: self._completed(cue_id, completed))
+        executor = self._dmx_executor if cue["type"] == "dmx" else self._relay_executor
+        future = executor.submit(self._execute, cue)
+        future.add_done_callback(
+            lambda completed, cue_id=cue["id"]: self._completed(cue_id, completed)
+        )
 
     def activity(self) -> dict[str, dict]:
         with self._lock:
@@ -235,11 +247,22 @@ class ActionDispatcher:
             if self._closed:
                 return
             self._closed = True
-            timers = list(self._timers)
-            self._timers.clear()
-        for timer in timers:
-            timer.cancel()
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._relay_executor.shutdown(wait=False, cancel_futures=True)
+        self._dmx_executor.shutdown(wait=False, cancel_futures=True)
+        if self.dmx_runtime is not None:
+            self.dmx_runtime.close()
+
+    def dmx_status(self) -> dict:
+        if self.dmx_runtime is None:
+            return {
+                "connected": False,
+                "mode": "unavailable",
+                "port": None,
+                "refresh_hz": 0,
+                "last_error": "Integrated DMX output is not configured",
+                "universe": {"blackout": False, "fixtures": []},
+            }
+        return self.dmx_runtime.status()
 
     def _completed(self, cue_id: str, future: Future[str]) -> None:
         try:
@@ -265,53 +288,9 @@ class ActionDispatcher:
             )
             return f"Relay active for {config['duration_ms']} ms"
 
-        target = config["target"]
-        if target == "fixture":
-            url = f"{config['base_url']}/api/fixtures/{config['fixture_id']}"
-            method = "PATCH"
-            target_label = f"Fixture {config['fixture_id']}"
-        else:
-            url = f"{config['base_url']}/api/all"
-            method = "POST"
-            target_label = "All fixtures"
-        payload: dict[str, Any] = {"enabled": config["enabled"]}
-        if config["enabled"]:
-            payload["color"] = config["color"]
-        self._request(url, method, payload)
-
-        duration_ms = config["duration_ms"]
-        if config["enabled"] and duration_ms:
-            off_payload = {"enabled": False}
-            self._schedule_off(cue["id"], duration_ms, url, method, off_payload)
-            return f"{target_label} active for {duration_ms} ms"
-        return f"{target_label} {'on' if config['enabled'] else 'off'}"
-
-    def _schedule_off(
-        self, cue_id: str, duration_ms: int, url: str, method: str, payload: dict
-    ) -> None:
-        timer: threading.Timer
-
-        def turn_off() -> None:
-            try:
-                self._request(url, method, payload)
-            except Exception as exc:
-                with self._lock:
-                    self._activity[cue_id] = {
-                        "state": "error",
-                        "message": f"Automatic DMX off failed: {exc}",
-                        "updated_at": _timestamp(),
-                    }
-            finally:
-                with self._lock:
-                    self._timers.discard(timer)
-
-        timer = threading.Timer(duration_ms / 1000, turn_off)
-        timer.daemon = True
-        with self._lock:
-            if self._closed:
-                return
-            self._timers.add(timer)
-        timer.start()
+        if self.dmx_runtime is None:
+            raise DMXError("Integrated DMX output is not configured")
+        return self.dmx_runtime.apply(config)
 
     def _request(self, url: str, method: str, payload: dict) -> dict:
         body = json.dumps(payload).encode("utf-8")

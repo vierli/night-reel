@@ -135,6 +135,16 @@ class PlaylistStore:
             self._save()
             return [dict(video) for video in self._videos]
 
+    def set_loop_enabled(self, video_id: str, enabled: bool) -> dict[str, Any]:
+        self.refresh(force=True)
+        with self._lock:
+            video = next((item for item in self._videos if item["id"] == video_id), None)
+            if video is None:
+                raise PlaylistError("Video not found")
+            video["loop_enabled"] = bool(enabled)
+            self._save()
+            return dict(video)
+
     def _load_manifest(self) -> None:
         if not self.manifest_path.exists():
             return
@@ -179,6 +189,9 @@ class PlaylistStore:
             video.setdefault("id", uuid.uuid4().hex)
             video.setdefault("name", path.stem)
             video.setdefault("uploaded_at", datetime.now(timezone.utc).isoformat())
+            if not isinstance(video.get("loop_enabled"), bool):
+                video["loop_enabled"] = True
+                changed = True
             valid.append(video)
             known_files.add(file_key)
 
@@ -255,6 +268,7 @@ class PlaylistStore:
             "size_bytes": path.stat().st_size,
             "source": "media" if storage != "uploads" else "uploads",
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "loop_enabled": True,
         }
 
     def _unique_destination(self, safe_name: str) -> Path:
@@ -269,7 +283,6 @@ class PlaylistStore:
 
     def _save(self) -> None:
         temporary = self.manifest_path.with_suffix(".tmp")
-        payload = {"version": 2, "videos": self._videos}
+        payload = {"version": 3, "videos": self._videos}
         temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(temporary, self.manifest_path)
-

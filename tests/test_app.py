@@ -51,7 +51,8 @@ def test_empty_status_and_health(client):
     status = client.get("/api/status").get_json()
     assert status["playlist"] == []
     assert status["player"]["state"] == "stopped"
-    assert status["player"]["loop"] is True
+    assert status["player"]["loop"] is False
+    assert status["player"]["loop_count"] == 0
     assert status["player"]["engine_elapsed_ms"] == 0
     assert status["player"]["fallback_elapsed_ms"] == 0
     assert status["player"]["fullscreen"] is True
@@ -66,6 +67,9 @@ def test_empty_status_and_health(client):
             {"id": "analog", "name": "Analog output"},
         ],
     }
+    assert status["dmx"]["mode"] == "simulation"
+    assert status["dmx"]["connected"] is True
+    assert [fixture["id"] for fixture in status["dmx"]["universe"]["fixtures"]] == [1, 2]
 
 
 def test_switches_between_fullscreen_and_windowed(client):
@@ -192,6 +196,46 @@ def test_reorder_and_duplicate_filenames(client):
     assert [item["id"] for item in reordered["playlist"]] == [second["id"], first["id"]]
 
 
+def test_loop_markers_are_persistent_and_control_playback_order(client, app, tmp_path):
+    first = upload(client, "first-loop.mp4").get_json()["added"][0]
+    skipped = upload(client, "manual-only.mp4").get_json()["added"][0]
+    third = upload(client, "third-loop.mp4").get_json()["added"][0]
+
+    disabled = client.patch(
+        f"/api/videos/{skipped['id']}/loop", json={"enabled": False}
+    )
+    assert disabled.status_code == 200
+    assert disabled.get_json()["player"]["loop_count"] == 2
+    assert next(
+        video for video in disabled.get_json()["playlist"] if video["id"] == skipped["id"]
+    )["loop_enabled"] is False
+
+    persisted = PlaylistStore(tmp_path / "playlist.json", tmp_path / "media")
+    assert persisted.get(skipped["id"])["loop_enabled"] is False
+
+    client.post(
+        "/api/control", json={"action": "play", "video_id": skipped["id"]}
+    )
+    engine = app.extensions["nightreel_player"].engine
+    engine._state = "ended"
+    time.sleep(0.12)
+    assert client.get("/api/status").get_json()["player"]["current_id"] == third["id"]
+
+    client.patch(f"/api/videos/{first['id']}/loop", json={"enabled": False})
+    client.patch(f"/api/videos/{third['id']}/loop", json={"enabled": False})
+    engine._state = "ended"
+    time.sleep(0.12)
+    stopped = client.get("/api/status").get_json()
+    assert stopped["player"]["state"] == "stopped"
+    assert stopped["player"]["loop_count"] == 0
+    assert client.post("/api/control", json={"action": "play"}).status_code == 400
+
+    invalid = client.patch(
+        f"/api/videos/{first['id']}/loop", json={"enabled": "yes"}
+    )
+    assert invalid.status_code == 400
+
+
 def test_rejects_non_mp4_and_bad_commands(client):
     response = upload(client, "notes.txt")
     assert response.status_code == 400
@@ -273,6 +317,7 @@ def test_discovers_all_mp4s_from_both_media_folders(tmp_path):
         "season-one/finale.mp4",
     }
     assert {video["source"] for video in videos} == {"uploads", "media"}
+    assert all(video["loop_enabled"] is True for video in videos)
     for video in videos:
         assert store.path_for(video["id"]).is_file()
 
@@ -313,7 +358,6 @@ def test_cues_can_be_created_updated_deleted_and_reloaded(client, app, tmp_path)
             "type": "dmx",
             "label": "Red flash",
             "config": {
-                "base_url": "http://127.0.0.1:8000",
                 "target": "fixture",
                 "fixture_id": 2,
                 "enabled": True,
@@ -323,6 +367,7 @@ def test_cues_can_be_created_updated_deleted_and_reloaded(client, app, tmp_path)
         },
     ).get_json()["cue"]
     assert updated["config"]["color"] == "#ff2000"
+    assert "base_url" not in updated["config"]
     assert CueStore(tmp_path / "cues.json").get(cue["id"]) == updated
 
     removed = client.delete(f"/api/cues/{cue['id']}")
@@ -343,27 +388,85 @@ def test_invalid_action_configuration_is_rejected(client):
     assert bad_duration.status_code == 400
     assert "duration_ms" in bad_duration.get_json()["error"]
 
-    bad_url = client.post(
+    bad_color = client.post(
         f"/api/videos/{video['id']}/cues",
         json={
             "time_ms": 0,
             "type": "dmx",
             "config": {
-                "base_url": "not-an-address",
                 "target": "all",
-                "enabled": False,
-                "color": "#ffffff",
+                "enabled": True,
+                "color": "orange",
                 "duration_ms": 0,
             },
         },
     )
-    assert bad_url.status_code == 400
+    assert bad_color.status_code == 400
 
 
-def test_action_dispatcher_uses_existing_relay_and_dmx_apis():
-    dispatcher = ActionDispatcher()
+def test_dmx_cue_changes_the_integrated_universe(client):
+    video = upload(client, "dmx-cue.mp4").get_json()["added"][0]
+    created = client.post(
+        f"/api/videos/{video['id']}/cues",
+        json={
+            "time_ms": 0,
+            "type": "dmx",
+            "label": "Keep blue on",
+            "config": {
+                "target": "fixture",
+                "fixture_id": 1,
+                "enabled": True,
+                "color": "#0033ff",
+                "duration_ms": 0,
+            },
+        },
+    ).get_json()["cue"]
+
+    assert client.post(f"/api/cues/{created['id']}/test").status_code == 202
+    deadline = time.monotonic() + 1
+    activity = None
+    while time.monotonic() < deadline:
+        status = client.get("/api/status").get_json()
+        activity = status["cue_activity"].get(created["id"])
+        if activity and activity["state"] == "success":
+            break
+        time.sleep(0.01)
+
+    fixture = status["dmx"]["universe"]["fixtures"][0]
+    assert activity["message"] == "Fixture 1 on until next change"
+    assert fixture["enabled"] is True
+    assert fixture["color"] == "#0033ff"
+
+
+def test_action_dispatcher_uses_relay_api_and_integrated_dmx():
+    class FakeDMXRuntime:
+        def __init__(self):
+            self.applied = []
+            self.closed = False
+
+        def apply(self, config):
+            self.applied.append(config)
+            target = (
+                "All fixtures"
+                if config["target"] == "all"
+                else f"Fixture {config['fixture_id']}"
+            )
+            if config["enabled"] and config["duration_ms"] == 0:
+                return f"{target} on until next change"
+            return f"{target} off"
+
+        def status(self):
+            return {"connected": True, "universe": {"fixtures": []}}
+
+        def close(self):
+            self.closed = True
+
+    dmx_runtime = FakeDMXRuntime()
+    dispatcher = ActionDispatcher(dmx_runtime=dmx_runtime)
     requests = []
-    dispatcher._request = lambda url, method, payload: requests.append((url, method, payload)) or {}
+    dispatcher._request = (
+        lambda url, method, payload: requests.append((url, method, payload)) or {}
+    )
 
     relay_message = dispatcher._execute(
         {
@@ -377,7 +480,6 @@ def test_action_dispatcher_uses_existing_relay_and_dmx_apis():
             "id": "dmx-cue",
             "type": "dmx",
             "config": {
-                "base_url": "http://127.0.0.1:8000",
                 "target": "fixture",
                 "fixture_id": 2,
                 "enabled": True,
@@ -391,7 +493,6 @@ def test_action_dispatcher_uses_existing_relay_and_dmx_apis():
             "id": "dmx-all-cue",
             "type": "dmx",
             "config": {
-                "base_url": "http://127.0.0.1:8000",
                 "target": "all",
                 "enabled": False,
                 "color": "#ffffff",
@@ -402,17 +503,11 @@ def test_action_dispatcher_uses_existing_relay_and_dmx_apis():
     dispatcher.close()
 
     assert relay_message == "Relay active for 5000 ms"
-    assert dmx_message == "Fixture 2 on"
+    assert dmx_message == "Fixture 2 on until next change"
     assert dmx_all_message == "All fixtures off"
-    assert requests == [
-        ("http://relay.local/api/relay", "POST", {"duration_ms": 5000}),
-        (
-            "http://127.0.0.1:8000/api/fixtures/2",
-            "PATCH",
-            {"enabled": True, "color": "#102030"},
-        ),
-        ("http://127.0.0.1:8000/api/all", "POST", {"enabled": False}),
-    ]
+    assert requests == [("http://relay.local/api/relay", "POST", {"duration_ms": 5000})]
+    assert [config["target"] for config in dmx_runtime.applied] == ["fixture", "all"]
+    assert dmx_runtime.closed is True
 
 
 def test_cue_fires_once_per_run_and_rearms_after_stop_or_loop(tmp_path):
