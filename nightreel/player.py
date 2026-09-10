@@ -29,6 +29,13 @@ class PlaybackEngine(Protocol):
     def show_black_screen(self, path: Path) -> None: ...
     def set_fullscreen(self, enabled: bool) -> bool: ...
     def fullscreen(self) -> bool: ...
+    def set_volume(self, volume: int) -> int: ...
+    def volume(self) -> int: ...
+    def set_muted(self, muted: bool) -> bool: ...
+    def muted(self) -> bool: ...
+    def audio_devices(self) -> list[dict[str, str]]: ...
+    def set_audio_device(self, device_id: str) -> str: ...
+    def audio_device(self) -> str: ...
     def close(self) -> None: ...
 
 
@@ -52,6 +59,11 @@ class VLCEngine:
 
         options = ["--quiet", "--no-video-title-show", "--no-osd", "--avcodec-hw=any"]
         self._fullscreen = fullscreen
+        self._volume = 100
+        self._muted = False
+        self._audio_device = ""
+        self._audio_devices_cache: list[dict[str, str]] = []
+        self._audio_devices_cached_at = 0.0
         if fullscreen:
             options.append("--fullscreen")
         if audio_output:
@@ -83,6 +95,7 @@ class VLCEngine:
         result = self._player.play()
         if result == -1:
             raise PlaybackError("VLC could not start this video")
+        self._apply_audio_preferences()
         if self._fullscreen:
             self._player.set_fullscreen(True)
 
@@ -135,6 +148,92 @@ class VLCEngine:
     def fullscreen(self) -> bool:
         return self._fullscreen
 
+    def set_volume(self, volume: int) -> int:
+        self._volume = max(0, min(100, int(volume)))
+        # LibVLC may return -1 while no audio stream is active. The preference
+        # is still retained and applied again whenever playback starts.
+        self._player.audio_set_volume(self._volume)
+        return self._volume
+
+    def volume(self) -> int:
+        current = int(self._player.audio_get_volume())
+        if current >= 0:
+            self._volume = max(0, min(100, current))
+        return self._volume
+
+    def set_muted(self, muted: bool) -> bool:
+        self._muted = bool(muted)
+        self._player.audio_set_mute(self._muted)
+        return self._muted
+
+    def muted(self) -> bool:
+        current = int(self._player.audio_get_mute())
+        if current in {0, 1}:
+            self._muted = bool(current)
+        return self._muted
+
+    def audio_devices(self) -> list[dict[str, str]]:
+        now = time.monotonic()
+        if now - self._audio_devices_cached_at < 2:
+            return [dict(item) for item in self._audio_devices_cache]
+
+        devices: list[dict[str, str]] = []
+        head = None
+        try:
+            head = self._player.audio_output_device_enum()
+            current = head
+            while current:
+                item = current.contents
+                device_id = self._decode_vlc_text(item.device)
+                if device_id and all(device["id"] != device_id for device in devices):
+                    devices.append(
+                        {
+                            "id": device_id,
+                            "name": self._decode_vlc_text(item.description) or device_id,
+                        }
+                    )
+                current = item.next
+        except Exception:
+            devices = []
+        finally:
+            if head:
+                try:
+                    self._vlc.libvlc_audio_output_device_list_release(head)
+                except Exception:
+                    pass
+
+        # Some VLC outputs only enumerate devices while an audio stream is
+        # active. Keep the last successful list available while stopped.
+        if devices or not self._audio_devices_cache:
+            self._audio_devices_cache = devices
+        self._audio_devices_cached_at = now
+        return [dict(item) for item in self._audio_devices_cache]
+
+    def set_audio_device(self, device_id: str) -> str:
+        normalized = str(device_id).strip()
+        if normalized:
+            available = {device["id"] for device in self.audio_devices()}
+            if normalized not in available:
+                raise PlaybackError("The selected audio device is no longer available")
+        self._audio_device = normalized
+        self._player.audio_output_device_set(None, normalized or None)
+        return self._audio_device
+
+    def audio_device(self) -> str:
+        return self._audio_device
+
+    @staticmethod
+    def _decode_vlc_text(value) -> str:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value) if value else ""
+
+    def _apply_audio_preferences(self) -> None:
+        if self._audio_device:
+            self._player.audio_output_device_set(None, self._audio_device)
+        self._player.audio_set_volume(self._volume)
+        self._player.audio_set_mute(self._muted)
+
     def close(self) -> None:
         self.stop()
         self._player.release()
@@ -152,6 +251,9 @@ class MockEngine:
         self._started_at = 0.0
         self._state = "stopped"
         self._fullscreen = fullscreen
+        self._volume = 100
+        self._muted = False
+        self._audio_device = ""
         self.path: Path | None = None
 
     def load(self, path: Path) -> None:
@@ -199,6 +301,36 @@ class MockEngine:
 
     def fullscreen(self) -> bool:
         return self._fullscreen
+
+    def set_volume(self, volume: int) -> int:
+        self._volume = max(0, min(100, int(volume)))
+        return self._volume
+
+    def volume(self) -> int:
+        return self._volume
+
+    def set_muted(self, muted: bool) -> bool:
+        self._muted = bool(muted)
+        return self._muted
+
+    def muted(self) -> bool:
+        return self._muted
+
+    def audio_devices(self) -> list[dict[str, str]]:
+        return [
+            {"id": "hdmi", "name": "HDMI output"},
+            {"id": "analog", "name": "Analog output"},
+        ]
+
+    def set_audio_device(self, device_id: str) -> str:
+        available = {device["id"] for device in self.audio_devices()}
+        if device_id and device_id not in available:
+            raise PlaybackError("The selected audio device is no longer available")
+        self._audio_device = device_id
+        return self._audio_device
+
+    def audio_device(self) -> str:
+        return self._audio_device
 
     def close(self) -> None:
         self.stop()
@@ -262,6 +394,15 @@ class PlaybackController:
                     "fallback_elapsed_ms": fallback_elapsed,
                     "fullscreen": self.engine.fullscreen(),
                     "black_screen": self._black_screen,
+                    "audio": {
+                        "volume": self.engine.volume(),
+                        "muted": self.engine.muted(),
+                        "device_id": self.engine.audio_device(),
+                        "devices": [
+                            {"id": "", "name": "System default"},
+                            *self.engine.audio_devices(),
+                        ],
+                    },
                     "loop": True,
                     "backend": self.engine.backend_name,
                     "error": self._last_error,
@@ -360,6 +501,21 @@ class PlaybackController:
     def set_fullscreen(self, enabled: bool) -> dict:
         with self._lock:
             self.engine.set_fullscreen(enabled)
+            return self.status()
+
+    def set_volume(self, volume: int) -> dict:
+        with self._lock:
+            self.engine.set_volume(volume)
+            return self.status()
+
+    def set_muted(self, muted: bool) -> dict:
+        with self._lock:
+            self.engine.set_muted(muted)
+            return self.status()
+
+    def set_audio_device(self, device_id: str) -> dict:
+        with self._lock:
+            self.engine.set_audio_device(device_id)
             return self.status()
 
     def set_black_screen(self, enabled: bool) -> dict:

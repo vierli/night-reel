@@ -2,7 +2,7 @@
 
 Night Reel is a local MP4 loop player for a Raspberry Pi 5. VLC renders video on the Pi's attached display while any phone, tablet, or computer on the same network can control playback from a web browser.
 
-The control screen shows the current file and live timecode, supports start, pause, stop, next, fullscreen/windowed display modes, and a persistent black-screen output. It also lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
+The control screen shows the current file and live timecode, supports start, pause, stop, next, fullscreen/windowed display modes, a persistent black-screen output, and VLC audio controls. It also lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
 
 The action track schedules persistent timecode cues for every video. A cue can pulse the relay from the `ESP32_Relais_Webservice` project or control one/all RGB fixtures through the REST API from the `DMX-LED-steuerung` / DMX Desk project.
 
@@ -65,6 +65,10 @@ Configuration is supplied as environment variables, either in a terminal or in `
 | `NIGHTREEL_ACTION_TIMEOUT` | `4` | Network timeout in seconds for relay and DMX action requests |
 
 Browser uploads are saved in `data/media/`. You can also copy MP4 files directly into `media/`, including subfolders. Night Reel scans both locations while it runs, and extension matching is case-insensitive (`.mp4` and `.MP4` both work).
+
+## Audio controls
+
+The player panel contains a volume slider, a mute button, and an **Audio output** selector. The selector is populated with the devices reported by VLC, such as HDMI, USB, analog, or Bluetooth outputs. Some VLC output modules only report their device list while a video with audio is playing; if only **System default** is initially visible, start a video and wait a few seconds. The selected device, volume, and mute state are retained when the playlist moves to the next video.
 
 ## Timecode actions
 

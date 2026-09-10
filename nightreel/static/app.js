@@ -57,6 +57,11 @@ const dom = {
   dmxColor: document.querySelector("#dmx-color"),
   dmxDurationField: document.querySelector("#dmx-duration-field"),
   dmxDuration: document.querySelector("#dmx-duration"),
+  audioDevice: document.querySelector("#audio-device"),
+  volumeSlider: document.querySelector("#volume-slider"),
+  volumeValue: document.querySelector("#volume-value"),
+  muteButton: document.querySelector("#mute-button"),
+  muteIcon: document.querySelector("#mute-icon"),
 };
 
 let snapshot = null;
@@ -68,6 +73,7 @@ let cueVideosKey = "";
 let selectedCueVideoId = null;
 let cueItems = [];
 let cueLoadToken = 0;
+let audioDevicesKey = "";
 let displayClock = {
   currentId: null,
   elapsedMs: 0,
@@ -195,11 +201,40 @@ function applyStatus(data) {
   );
   dom.blackScreen.querySelector("span").textContent = blackScreenActive ? "Exit black" : "Black screen";
   dom.blackScreen.setAttribute("aria-pressed", String(blackScreenActive));
+  renderAudioControls(player.audio);
 
   if (player.error) showToast(player.error, true);
   renderPlaylist(data.playlist, player.current_id);
   syncCueVideoOptions(data.playlist, player.current_id);
   renderCueTrack();
+}
+
+function renderAudioControls(audio) {
+  if (!audio) return;
+  const devices = Array.isArray(audio.devices) ? audio.devices : [];
+  const devicesKey = devices.map(device => `${device.id}:${device.name}`).join("|");
+  if (devicesKey !== audioDevicesKey) {
+    audioDevicesKey = devicesKey;
+    dom.audioDevice.replaceChildren();
+    devices.forEach(device => {
+      const option = document.createElement("option");
+      option.value = device.id;
+      option.textContent = device.name;
+      dom.audioDevice.append(option);
+    });
+  }
+
+  if (document.activeElement !== dom.audioDevice) {
+    dom.audioDevice.value = audio.device_id || "";
+  }
+  if (document.activeElement !== dom.volumeSlider) {
+    dom.volumeSlider.value = String(audio.volume);
+  }
+  dom.volumeValue.textContent = `${audio.volume}%`;
+  dom.muteButton.setAttribute("aria-pressed", String(audio.muted));
+  dom.muteButton.setAttribute("aria-label", audio.muted ? "Unmute audio" : "Mute audio");
+  dom.muteButton.title = audio.muted ? "Unmute audio" : "Mute audio";
+  dom.muteIcon.setAttribute("href", audio.muted || audio.volume === 0 ? "#i-muted" : "#i-volume");
 }
 
 function renderTimecode() {
@@ -630,6 +665,18 @@ dom.blackScreen.addEventListener("click", () => {
   if (snapshot) sendControl("black_screen", { enabled: !snapshot.player.black_screen });
 });
 dom.next.addEventListener("click", () => sendControl("next"));
+dom.volumeSlider.addEventListener("input", event => {
+  dom.volumeValue.textContent = `${event.target.value}%`;
+});
+dom.volumeSlider.addEventListener("change", event => {
+  sendControl("audio_volume", { volume: Number(event.target.value) });
+});
+dom.muteButton.addEventListener("click", () => {
+  if (snapshot) sendControl("audio_mute", { muted: !snapshot.player.audio.muted });
+});
+dom.audioDevice.addEventListener("change", event => {
+  sendControl("audio_device", { device_id: event.target.value });
+});
 dom.fileInput.addEventListener("change", event => uploadFiles(event.target.files));
 
 ["dragenter", "dragover"].forEach(name => dom.dropzone.addEventListener(name, event => {

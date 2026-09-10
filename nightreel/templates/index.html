@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#11100f">
     <meta name="description" content="Control local looped video playback on your Raspberry Pi.">
     <title>Night Reel · Pi video control</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=6">
-    <script src="{{ url_for('static', filename='app.js') }}?v=6" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=7">
+    <script src="{{ url_for('static', filename='app.js') }}?v=7" defer></script>
   </head>
   <body>
     <svg class="icon-library" aria-hidden="true">
@@ -26,6 +26,8 @@
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
       <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16.9 3.6 3.5 3.5L9 18.5 4 20l1.5-5zM7.2 15.9l-.5 1.4 1.4-.5 9.5-9.5-.9-.9z"/></symbol>
       <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13.2 2 5 13h6l-.2 9L19 10h-6z"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zm12.2-.8a5.4 5.4 0 0 1 0 7.6l-1.4-1.4a3.4 3.4 0 0 0 0-4.8zm2.8-2.8a9.3 9.3 0 0 1 0 13.2l-1.4-1.4a7.3 7.3 0 0 0 0-10.4z"/></symbol>
+      <symbol id="i-muted" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zm11.7.3 1.8 1.8 1.8-1.8 1.4 1.4-1.8 1.8 1.8 1.8-1.4 1.4-1.8-1.8-1.8 1.8-1.4-1.4 1.8-1.8-1.8-1.8z"/></symbol>
     </svg>
 
     <header class="topbar">
@@ -96,6 +98,23 @@
           <button class="control icon-control" id="next-button" type="button" aria-label="Play next video" title="Next video">
             <svg class="icon"><use href="#i-next"></use></svg>
           </button>
+        </div>
+
+        <div class="audio-panel" aria-label="Audio controls">
+          <label class="audio-device-control" for="audio-device">
+            <span class="audio-control-label">Audio output</span>
+            <select id="audio-device">
+              <option value="">System default</option>
+            </select>
+          </label>
+          <div class="volume-control">
+            <button class="mute-button" id="mute-button" type="button" aria-label="Mute audio" aria-pressed="false">
+              <svg class="icon"><use id="mute-icon" href="#i-volume"></use></svg>
+            </button>
+            <label for="volume-slider">Volume</label>
+            <input id="volume-slider" type="range" min="0" max="100" step="1" value="100">
+            <output id="volume-value" for="volume-slider">100%</output>
+          </div>
         </div>
       </section>
 

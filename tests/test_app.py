@@ -45,6 +45,8 @@ def test_empty_status_and_health(client):
     assert b"display-mode-button" in page.data
     assert b"Action track" in page.data
     assert b"cue-dialog" in page.data
+    assert b"audio-device" in page.data
+    assert b"volume-slider" in page.data
     assert client.get("/health").get_json() == {"ok": True}
     status = client.get("/api/status").get_json()
     assert status["playlist"] == []
@@ -54,6 +56,16 @@ def test_empty_status_and_health(client):
     assert status["player"]["fallback_elapsed_ms"] == 0
     assert status["player"]["fullscreen"] is True
     assert status["player"]["black_screen"] is False
+    assert status["player"]["audio"] == {
+        "volume": 100,
+        "muted": False,
+        "device_id": "",
+        "devices": [
+            {"id": "", "name": "System default"},
+            {"id": "hdmi", "name": "HDMI output"},
+            {"id": "analog", "name": "Analog output"},
+        ],
+    }
 
 
 def test_switches_between_fullscreen_and_windowed(client):
@@ -75,6 +87,37 @@ def test_switches_between_fullscreen_and_windowed(client):
         json={"action": "display_mode", "fullscreen": "yes"},
     )
     assert invalid.status_code == 400
+
+
+def test_audio_volume_mute_and_output_device_controls(client):
+    volume = client.post(
+        "/api/control",
+        json={"action": "audio_volume", "volume": 35},
+    )
+    assert volume.status_code == 200
+    assert volume.get_json()["player"]["audio"]["volume"] == 35
+
+    muted = client.post(
+        "/api/control",
+        json={"action": "audio_mute", "muted": True},
+    )
+    assert muted.get_json()["player"]["audio"]["muted"] is True
+
+    device = client.post(
+        "/api/control",
+        json={"action": "audio_device", "device_id": "hdmi"},
+    )
+    assert device.get_json()["player"]["audio"]["device_id"] == "hdmi"
+
+    assert client.post(
+        "/api/control", json={"action": "audio_volume", "volume": 101}
+    ).status_code == 400
+    assert client.post(
+        "/api/control", json={"action": "audio_mute", "muted": 1}
+    ).status_code == 400
+    assert client.post(
+        "/api/control", json={"action": "audio_device", "device_id": "missing"}
+    ).status_code == 400
 
 
 def test_black_screen_works_without_a_playlist(client, app, tmp_path):

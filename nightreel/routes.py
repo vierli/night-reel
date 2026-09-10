@@ -59,6 +59,25 @@ def control():
         if not isinstance(fullscreen, bool):
             return jsonify(error="fullscreen must be true or false"), 400
         result = player().set_fullscreen(fullscreen)
+    elif action == "audio_volume":
+        volume = payload.get("volume")
+        if (
+            isinstance(volume, bool)
+            or not isinstance(volume, int)
+            or not 0 <= volume <= 100
+        ):
+            return jsonify(error="volume must be an integer between 0 and 100"), 400
+        result = player().set_volume(volume)
+    elif action == "audio_mute":
+        muted = payload.get("muted")
+        if not isinstance(muted, bool):
+            return jsonify(error="muted must be true or false"), 400
+        result = player().set_muted(muted)
+    elif action == "audio_device":
+        device_id = payload.get("device_id")
+        if not isinstance(device_id, str):
+            return jsonify(error="device_id must be a string"), 400
+        result = player().set_audio_device(device_id)
     elif action == "black_screen":
         enabled = payload.get("enabled")
         if not isinstance(enabled, bool):
