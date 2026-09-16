@@ -272,6 +272,94 @@ def test_finished_video_automatically_advances(tmp_path):
     application.extensions["nightreel_player"].shutdown()
 
 
+def test_finished_video_ignores_stale_ended_state_during_next_start(tmp_path):
+    class SlowTransitionEngine(MockEngine):
+        def __init__(self):
+            super().__init__()
+            self.load_count = 0
+            self.stale_ended_reads = 0
+
+        def load(self, path):
+            super().load(path)
+            self.load_count += 1
+            if self.load_count > 1:
+                self.stale_ended_reads = 4
+
+        def state(self):
+            if self.stale_ended_reads:
+                self.stale_ended_reads -= 1
+                return "ended"
+            return super().state()
+
+    engine = SlowTransitionEngine()
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": tmp_path,
+            "PLAYER_ENGINE": engine,
+        }
+    )
+    client = application.test_client()
+    first = upload(client, "first.mp4").get_json()["added"][0]
+    second = upload(client, "second.mp4").get_json()["added"][0]
+    client.post("/api/control", json={"action": "play", "video_id": first["id"]})
+
+    engine._state = "ended"
+    time.sleep(0.35)
+
+    status = client.get("/api/status").get_json()
+    assert status["player"]["state"] == "playing"
+    assert status["player"]["current_id"] == second["id"]
+    assert engine.load_count == 2
+    application.extensions["nightreel_player"].shutdown()
+
+
+def test_next_video_start_is_retried_once_when_vlc_stays_ended(tmp_path):
+    class RetryStartEngine(MockEngine):
+        def __init__(self):
+            super().__init__()
+            self.load_count = 0
+            self.play_count = 0
+
+        def load(self, path):
+            super().load(path)
+            self.load_count += 1
+
+        def play(self):
+            super().play()
+            self.play_count += 1
+
+        def state(self):
+            if self.load_count >= 2 and self.play_count < 3:
+                return "ended"
+            return super().state()
+
+    engine = RetryStartEngine()
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": tmp_path,
+            "PLAYER_ENGINE": engine,
+        }
+    )
+    controller = application.extensions["nightreel_player"]
+    controller.STARTUP_GRACE_SECONDS = 0.05
+    client = application.test_client()
+    first = upload(client, "first.mp4").get_json()["added"][0]
+    second = upload(client, "second.mp4").get_json()["added"][0]
+    client.post("/api/control", json={"action": "play", "video_id": first["id"]})
+
+    engine._state = "ended"
+    time.sleep(0.3)
+
+    status = client.get("/api/status").get_json()
+    assert status["player"]["state"] == "playing"
+    assert status["player"]["current_id"] == second["id"]
+    assert engine.load_count == 3
+    assert engine.play_count == 3
+    controller.shutdown()
+
+
 def test_timecode_advances_when_engine_reports_zero(tmp_path):
     class ZeroTimeEngine(MockEngine):
         def elapsed_ms(self):
@@ -288,9 +376,11 @@ def test_timecode_advances_when_engine_reports_zero(tmp_path):
     upload(client, "clock-test.mp4")
     client.post("/api/control", json={"action": "play"})
 
-    time.sleep(0.03)
-
+    deadline = time.monotonic() + 0.3
     status = client.get("/api/status").get_json()
+    while status["player"]["elapsed_ms"] < 20 and time.monotonic() < deadline:
+        time.sleep(0.01)
+        status = client.get("/api/status").get_json()
     assert status["player"]["elapsed_ms"] >= 20
     assert status["player"]["engine_elapsed_ms"] == 0
     assert status["player"]["fallback_elapsed_ms"] >= 20

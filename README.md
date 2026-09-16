@@ -13,7 +13,6 @@ Night Reel targets the current 64-bit Raspberry Pi OS with the desktop. Connect 
 ```bash
 git clone https://github.com/vierli/night-reel.git
 cd night-reel
-chmod +x install-pi.sh
 ./install-pi.sh
 ```
 

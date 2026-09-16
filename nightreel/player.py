@@ -64,6 +64,7 @@ class VLCEngine:
         self._audio_device = ""
         self._audio_devices_cache: list[dict[str, str]] = []
         self._audio_devices_cached_at = 0.0
+        self._output_settings_pending = False
         if fullscreen:
             options.append("--fullscreen")
         if audio_output:
@@ -82,9 +83,14 @@ class VLCEngine:
             raise RuntimeError(f"VLC could not be initialized: {exc}") from exc
 
     def load(self, path: Path) -> None:
+        # A player left in Ended can keep reporting the previous input while a
+        # replacement is being opened. Stop it first so VLC creates a fresh
+        # video output for the next playlist item.
+        self.stop()
         media = self._instance.media_new_path(os.fspath(path))
         self._media = media
         self._player.set_media(media)
+        self._output_settings_pending = True
         try:
             media.parse_with_options(self._vlc.MediaParseFlag.local, 3_000)
         except (AttributeError, TypeError):
@@ -103,9 +109,17 @@ class VLCEngine:
         self._player.set_pause(1)
 
     def stop(self) -> None:
+        self._output_settings_pending = False
         self._player.stop()
 
     def state(self) -> str:
+        raw_state = self._player.get_state()
+        if raw_state == self._vlc.State.Playing and self._output_settings_pending:
+            # Fullscreen and audio output can be ignored before VLC has created
+            # the new video/audio outputs, so apply them again once it is live.
+            self._apply_audio_preferences()
+            self._player.set_fullscreen(self._fullscreen)
+            self._output_settings_pending = False
         mapping = {
             self._vlc.State.NothingSpecial: "stopped",
             self._vlc.State.Opening: "loading",
@@ -116,7 +130,7 @@ class VLCEngine:
             self._vlc.State.Ended: "ended",
             self._vlc.State.Error: "error",
         }
-        return mapping.get(self._player.get_state(), "stopped")
+        return mapping.get(raw_state, "stopped")
 
     def elapsed_ms(self) -> int:
         return max(0, int(self._player.get_time()))
@@ -130,11 +144,13 @@ class VLCEngine:
         return 0
 
     def show_black_screen(self, path: Path) -> None:
+        self.stop()
         media = self._instance.media_new_path(os.fspath(path))
         media.add_option(":image-duration=-1")
         media.add_option(":input-repeat=-1")
         self._media = media
         self._player.set_media(media)
+        self._output_settings_pending = True
         result = self._player.play()
         if result == -1:
             raise PlaybackError("VLC could not open the black screen")
@@ -337,6 +353,9 @@ class MockEngine:
 
 
 class PlaybackController:
+    STARTUP_GRACE_SECONDS = 0.8
+    MAX_START_ATTEMPTS = 2
+
     def __init__(
         self,
         store: PlaylistStore,
@@ -360,6 +379,9 @@ class PlaybackController:
         self._cue_video_id: str | None = None
         self._cue_previous_ms = -1
         self._fired_cues: set[str] = set()
+        self._pending_start_id: str | None = None
+        self._start_requested_at = 0.0
+        self._start_attempts = 0
         self._closing = threading.Event()
         self._monitor = threading.Thread(
             target=self._monitor_playback,
@@ -388,8 +410,24 @@ class PlaybackController:
                 engine_elapsed = 0
                 fallback_elapsed = 0
             else:
-                state = self.engine.state() if self._loaded_id else "stopped"
-                engine_elapsed = self.engine.elapsed_ms() if self._loaded_id else 0
+                raw_state = self.engine.state() if self._loaded_id else "stopped"
+                if (
+                    self._pending_start_id is not None
+                    and self._pending_start_id == self._loaded_id
+                    and raw_state in {"playing", "paused"}
+                ):
+                    self._clear_pending_start_locked()
+                startup_pending = (
+                    self._pending_start_id is not None
+                    and self._pending_start_id == self._loaded_id
+                    and raw_state in {"stopped", "ended", "error"}
+                )
+                state = "loading" if startup_pending else raw_state
+                engine_elapsed = (
+                    0
+                    if startup_pending
+                    else self.engine.elapsed_ms() if self._loaded_id else 0
+                )
                 fallback_elapsed = self._clock_value(state) if self._loaded_id else 0
             elapsed = max(engine_elapsed, fallback_elapsed)
             duration = self.engine.duration_ms() if self._loaded_id else 0
@@ -460,6 +498,10 @@ class PlaybackController:
             self._current_id = target_id
             self._last_error = None
             self.engine.play()
+            if should_load:
+                self._pending_start_id = target_id
+                self._start_requested_at = time.monotonic()
+                self._start_attempts = 1
             if self._clock_started_at is None:
                 self._clock_started_at = time.monotonic()
             return self.status()
@@ -473,6 +515,7 @@ class PlaybackController:
                 )
                 self._clock_started_at = None
                 self.engine.pause()
+                self._clear_pending_start_locked()
             return self.status()
 
     def stop(self) -> dict:
@@ -482,6 +525,7 @@ class PlaybackController:
             self._black_screen = False
             self._clock_elapsed_ms = 0
             self._clock_started_at = None
+            self._clear_pending_start_locked()
             self._reset_cues_locked(self._current_id)
             return self.status()
 
@@ -512,6 +556,7 @@ class PlaybackController:
                 self._current_id = None
                 self._clock_elapsed_ms = 0
                 self._clock_started_at = None
+                self._clear_pending_start_locked()
                 self._black_screen = False
                 self._reset_cues_locked(None)
                 if remaining:
@@ -569,6 +614,7 @@ class PlaybackController:
                 self._loaded_id = None
             self._clock_elapsed_ms = 0
             self._clock_started_at = None
+            self._clear_pending_start_locked()
             self._last_error = None
             self._reset_cues_locked(None)
             return self.status()
@@ -593,6 +639,7 @@ class PlaybackController:
             self._loaded_id = None
             self._clock_elapsed_ms = 0
             self._clock_started_at = None
+            self._clear_pending_start_locked()
             self._reset_cues_locked(None)
             return
         all_ids = [video["id"] for video in all_videos]
@@ -608,8 +655,47 @@ class PlaybackController:
             )
         else:
             target = loop_videos[0]["id"]
+        self.engine.stop()
         self._loaded_id = None
         self.play(target)
+
+    def _clear_pending_start_locked(self) -> None:
+        self._pending_start_id = None
+        self._start_requested_at = 0.0
+        self._start_attempts = 0
+
+    def _handle_pending_start_locked(self, state: str) -> bool:
+        """Return true while a new VLC input is still being established."""
+        if self._pending_start_id != self._loaded_id or not self._loaded_id:
+            self._clear_pending_start_locked()
+            return False
+        if state in {"playing", "paused", "loading"}:
+            if state in {"playing", "paused"}:
+                self._clear_pending_start_locked()
+                self._last_error = None
+            return state == "loading"
+        if time.monotonic() - self._start_requested_at < self.STARTUP_GRACE_SECONDS:
+            return True
+        if self._start_attempts < self.MAX_START_ATTEMPTS:
+            try:
+                self.engine.stop()
+                self.engine.load(self.store.path_for(self._loaded_id))
+                self.engine.play()
+                self._start_attempts += 1
+                self._start_requested_at = time.monotonic()
+                self._clock_elapsed_ms = 0
+                self._clock_started_at = self._start_requested_at
+                return True
+            except (PlaybackError, PlaylistError, OSError) as exc:
+                self._last_error = str(exc)
+        else:
+            self._last_error = "VLC could not start the next video"
+        self.engine.stop()
+        self._loaded_id = None
+        self._clock_elapsed_ms = 0
+        self._clock_started_at = None
+        self._clear_pending_start_locked()
+        return True
 
     def _clock_value(self, state: str) -> int:
         elapsed = self._clock_elapsed_ms
@@ -651,6 +737,8 @@ class PlaybackController:
                 if not self._loaded_id:
                     continue
                 state = self.engine.state()
+                if self._pending_start_id and self._handle_pending_start_locked(state):
+                    continue
                 if state in {"playing", "loading", "ended"}:
                     self._process_cues_locked(self._effective_elapsed_locked(state))
                 if state == "ended":
