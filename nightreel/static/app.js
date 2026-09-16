@@ -41,6 +41,7 @@ const dom = {
   cueDialogTitle: document.querySelector("#cue-dialog-title"),
   cueDialogClose: document.querySelector("#cue-dialog-close"),
   cueCancel: document.querySelector("#cue-cancel"),
+  cueDelete: document.querySelector("#cue-delete"),
   cueId: document.querySelector("#cue-id"),
   cueTime: document.querySelector("#cue-time"),
   cueType: document.querySelector("#cue-type"),
@@ -478,6 +479,7 @@ function updateCueFormVisibility() {
 function openCueDialog(cue = null, initialTimeMs = 0) {
   if (!selectedCueVideoId) return;
   dom.cueId.value = cue?.id || "";
+  dom.cueDelete.hidden = !cue;
   dom.cueDialogTitle.textContent = cue ? "Edit action" : "Add action";
   dom.cueTime.value = formatCueTime(cue?.time_ms ?? initialTimeMs);
   dom.cueType.value = cue?.type || "relay";
@@ -540,14 +542,21 @@ async function saveCue(event) {
 }
 
 async function deleteCue(cue) {
-  if (!window.confirm(`Delete the action at ${formatCueTime(cue.time_ms)}?`)) return;
+  if (!window.confirm(`Delete the action at ${formatCueTime(cue.time_ms)}?`)) return false;
   try {
     await api(`/api/cues/${encodeURIComponent(cue.id)}`, { method: "DELETE" });
     await loadCues(selectedCueVideoId);
     showToast("Action deleted");
+    return true;
   } catch (error) {
     showToast(error.message, true);
+    return false;
   }
+}
+
+async function deleteCurrentCue() {
+  const cue = cueItems.find(item => item.id === dom.cueId.value);
+  if (cue && await deleteCue(cue)) closeCueDialog();
 }
 
 async function testCue(cue) {
@@ -770,6 +779,7 @@ dom.dmxDurationMode.addEventListener("change", updateCueFormVisibility);
 dom.cueForm.addEventListener("submit", saveCue);
 dom.cueDialogClose.addEventListener("click", closeCueDialog);
 dom.cueCancel.addEventListener("click", closeCueDialog);
+dom.cueDelete.addEventListener("click", deleteCurrentCue);
 dom.cueDialog.addEventListener("click", event => {
   if (event.target === dom.cueDialog) closeCueDialog();
 });

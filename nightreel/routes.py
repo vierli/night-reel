@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+)
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from .actions import CueError, CueStore
@@ -29,7 +36,9 @@ def api_cache_headers(response):
 
 @web.get("/")
 def index():
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @web.get("/health")

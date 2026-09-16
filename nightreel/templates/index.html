@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#11100f">
     <meta name="description" content="Control local looped video playback on your Raspberry Pi.">
     <title>Night Reel · Pi video control</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=8">
-    <script src="{{ url_for('static', filename='app.js') }}?v=8" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=9">
+    <script src="{{ url_for('static', filename='app.js') }}?v=9" defer></script>
   </head>
   <body>
     <svg class="icon-library" aria-hidden="true">
@@ -279,6 +279,7 @@
         </fieldset>
 
         <div class="dialog-actions">
+          <button class="danger-button" id="cue-delete" type="button" hidden>Delete action</button>
           <button class="secondary-button" id="cue-cancel" type="button">Cancel</button>
           <button class="primary-button" type="submit">Save action</button>
         </div>

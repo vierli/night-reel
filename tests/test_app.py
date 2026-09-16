@@ -45,6 +45,10 @@ def test_empty_status_and_health(client):
     assert b"display-mode-button" in page.data
     assert b"Action track" in page.data
     assert b"cue-dialog" in page.data
+    assert b'id="cue-delete"' in page.data
+    assert b"DMX Desk service address" not in page.data
+    assert b"app.js?v=9" in page.data
+    assert page.headers["Cache-Control"] == "no-store"
     assert b"audio-device" in page.data
     assert b"volume-slider" in page.data
     assert client.get("/health").get_json() == {"ok": True}
