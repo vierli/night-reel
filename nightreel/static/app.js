@@ -61,6 +61,20 @@ const dom = {
   dmxDurationMode: document.querySelector("#dmx-duration-mode"),
   dmxDurationField: document.querySelector("#dmx-duration-field"),
   dmxDuration: document.querySelector("#dmx-duration"),
+  liveRelayForm: document.querySelector("#live-relay-form"),
+  liveRelayUrl: document.querySelector("#live-relay-url"),
+  liveRelayDuration: document.querySelector("#live-relay-duration"),
+  liveRelayTrigger: document.querySelector("#live-relay-trigger"),
+  liveRelayStatus: document.querySelector("#live-relay-status"),
+  liveDmxForm: document.querySelector("#live-dmx-form"),
+  liveDmxConnection: document.querySelector("#live-dmx-connection"),
+  liveDmxTarget: document.querySelector("#live-dmx-target"),
+  liveDmxFixtureField: document.querySelector("#live-dmx-fixture-field"),
+  liveDmxFixture: document.querySelector("#live-dmx-fixture"),
+  liveDmxColor: document.querySelector("#live-dmx-color"),
+  liveDmxOn: document.querySelector("#live-dmx-on"),
+  liveDmxOff: document.querySelector("#live-dmx-off"),
+  liveDmxStatus: document.querySelector("#live-dmx-status"),
   audioDevice: document.querySelector("#audio-device"),
   volumeSlider: document.querySelector("#volume-slider"),
   volumeValue: document.querySelector("#volume-value"),
@@ -80,6 +94,7 @@ let cueLoadToken = 0;
 let audioDevicesKey = "";
 let dmxFixturesKey = "";
 let copyingCue = false;
+const liveActionIds = { relay: null, dmx: null };
 let displayClock = {
   currentId: null,
   elapsedMs: 0,
@@ -210,6 +225,7 @@ function applyStatus(data) {
   );
   renderAudioControls(player.audio);
   renderDmxStatus(data.dmx);
+  renderLiveActionActivity(data.cue_activity || {});
 
   if (player.error) showToast(player.error, true);
   renderPlaylist(data.playlist, player.current_id);
@@ -222,26 +238,48 @@ function renderDmxStatus(dmx) {
   const fixtures = dmx.universe?.fixtures || [];
   const fixtureKey = fixtures.map(fixture => `${fixture.id}:${fixture.name}`).join("|");
   if (fixtureKey !== dmxFixturesKey) {
-    const selected = dom.dmxFixture.value;
     dmxFixturesKey = fixtureKey;
-    dom.dmxFixture.replaceChildren();
-    fixtures.forEach(fixture => {
-      const option = document.createElement("option");
-      option.value = String(fixture.id);
-      option.textContent = `${fixture.name} · address ${fixture.address}`;
-      dom.dmxFixture.append(option);
+    [dom.dmxFixture, dom.liveDmxFixture].forEach(select => {
+      const selected = select.value;
+      select.replaceChildren();
+      fixtures.forEach(fixture => {
+        const option = document.createElement("option");
+        option.value = String(fixture.id);
+        option.textContent = `${fixture.name} · address ${fixture.address}`;
+        select.append(option);
+      });
+      if (fixtures.some(fixture => String(fixture.id) === selected)) {
+        select.value = selected;
+      }
     });
-    if (fixtures.some(fixture => String(fixture.id) === selected)) {
-      dom.dmxFixture.value = selected;
-    }
   }
   const ready = dmx.connected || dmx.mode === "simulation";
-  dom.dmxStatus.className = `dmx-inline-status ${ready ? "online" : "offline"}`;
-  dom.dmxStatus.querySelector("span").textContent = dmx.mode === "simulation"
+  const message = dmx.mode === "simulation"
     ? "Integrated DMX simulation"
     : dmx.connected
       ? `Integrated DMX online · ${dmx.port}`
       : `DMX offline · ${dmx.last_error || dmx.port}`;
+  [dom.dmxStatus, dom.liveDmxConnection].forEach(status => {
+    status.className = `dmx-inline-status ${ready ? "online" : "offline"}`;
+    status.querySelector("span").textContent = message;
+  });
+  dom.liveDmxOn.disabled = !ready || fixtures.length === 0;
+  dom.liveDmxOff.disabled = !ready || fixtures.length === 0;
+}
+
+function setLiveResult(element, state, message) {
+  element.className = `live-result ${state}`.trim();
+  element.querySelector("span").textContent = message;
+  element.querySelector("span").title = message;
+}
+
+function renderLiveActionActivity(activity) {
+  Object.entries(liveActionIds).forEach(([type, actionId]) => {
+    if (!actionId || !activity[actionId]) return;
+    const target = type === "relay" ? dom.liveRelayStatus : dom.liveDmxStatus;
+    const result = activity[actionId];
+    setLiveResult(target, result.state, result.message);
+  });
 }
 
 function renderAudioControls(audio) {
@@ -571,6 +609,53 @@ async function testCue(cue) {
   }
 }
 
+function updateLiveDmxVisibility() {
+  dom.liveDmxFixtureField.hidden = dom.liveDmxTarget.value !== "fixture";
+  dom.liveDmxFixture.required = dom.liveDmxTarget.value === "fixture";
+}
+
+async function triggerLiveAction(type, config) {
+  const status = type === "relay" ? dom.liveRelayStatus : dom.liveDmxStatus;
+  setLiveResult(status, "running", "Sending command…");
+  try {
+    const result = await api("/api/actions/trigger", {
+      method: "POST",
+      body: JSON.stringify({ type, config }),
+    });
+    liveActionIds[type] = result.action_id;
+    setLiveResult(status, "running", "Command sent…");
+  } catch (error) {
+    setLiveResult(status, "error", error.message);
+    showToast(error.message, true);
+  }
+}
+
+function liveDmxConfig(enabled) {
+  return {
+    target: dom.liveDmxTarget.value,
+    fixture_id: Number(dom.liveDmxFixture.value),
+    enabled,
+    color: dom.liveDmxColor.value,
+    duration_ms: 0,
+  };
+}
+
+function saveLiveRelayDefaults() {
+  try {
+    window.localStorage.setItem("nightreel.liveRelayUrl", dom.liveRelayUrl.value.trim());
+    window.localStorage.setItem("nightreel.liveRelayDuration", dom.liveRelayDuration.value);
+  } catch (_) { /* Browser storage is optional. */ }
+}
+
+function loadLiveRelayDefaults() {
+  try {
+    const url = window.localStorage.getItem("nightreel.liveRelayUrl");
+    const duration = window.localStorage.getItem("nightreel.liveRelayDuration");
+    if (url) dom.liveRelayUrl.value = url;
+    if (duration) dom.liveRelayDuration.value = duration;
+  } catch (_) { /* Use the defaults from the page. */ }
+}
+
 function renderPlaylist(videos, currentId) {
   const key = `${currentId || ""}:${videos.map(item => `${item.id}:${item.loop_enabled}`).join(",")}`;
   if (key === renderedPlaylistKey) return;
@@ -754,6 +839,22 @@ dom.muteButton.addEventListener("click", () => {
 dom.audioDevice.addEventListener("change", event => {
   sendControl("audio_device", { device_id: event.target.value });
 });
+dom.liveRelayForm.addEventListener("submit", event => {
+  event.preventDefault();
+  saveLiveRelayDefaults();
+  triggerLiveAction("relay", {
+    base_url: dom.liveRelayUrl.value.trim(),
+    duration_ms: Number(dom.liveRelayDuration.value),
+  });
+});
+dom.liveDmxTarget.addEventListener("change", updateLiveDmxVisibility);
+dom.liveDmxForm.addEventListener("submit", event => {
+  event.preventDefault();
+  triggerLiveAction("dmx", liveDmxConfig(true));
+});
+dom.liveDmxOff.addEventListener("click", () => {
+  triggerLiveAction("dmx", liveDmxConfig(false));
+});
 dom.fileInput.addEventListener("change", event => uploadFiles(event.target.files));
 
 ["dragenter", "dragover"].forEach(name => dom.dropzone.addEventListener(name, event => {
@@ -785,5 +886,7 @@ dom.cueDialog.addEventListener("click", event => {
 });
 
 dom.controllerAddress.textContent = window.location.origin;
+loadLiveRelayDefaults();
+updateLiveDmxVisibility();
 requestAnimationFrame(renderTimecode);
 pollStatus();

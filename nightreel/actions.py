@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,6 +90,21 @@ def _normalize_config(action_type: str, raw: Any) -> dict[str, Any]:
         return config
 
     raise CueError("type must be relay or dmx")
+
+
+def normalize_action(payload: Any) -> dict:
+    """Validate an action that should run immediately, outside the cue track."""
+    if not isinstance(payload, dict):
+        raise CueError("Action body must be a JSON object")
+    action_type = payload.get("type")
+    if action_type not in {"relay", "dmx"}:
+        raise CueError("type must be relay or dmx")
+    return {
+        "id": f"manual-{uuid.uuid4().hex}",
+        "type": action_type,
+        "source": "manual",
+        "config": _normalize_config(action_type, payload.get("config")),
+    }
 
 
 def normalize_cue(video_id: str, payload: Any, *, cue_id: str | None = None) -> dict:
@@ -221,6 +237,7 @@ class ActionDispatcher:
         )
         self._lock = threading.RLock()
         self._activity: dict[str, dict] = {}
+        self._manual_activity_ids: deque[str] = deque()
         self._closed = False
 
     def dispatch(self, cue: dict) -> None:
@@ -232,6 +249,11 @@ class ActionDispatcher:
                 "message": "Sending action…",
                 "updated_at": _timestamp(),
             }
+            if cue.get("source") == "manual":
+                self._manual_activity_ids.append(cue["id"])
+                while len(self._manual_activity_ids) > 50:
+                    expired_id = self._manual_activity_ids.popleft()
+                    self._activity.pop(expired_id, None)
         executor = self._dmx_executor if cue["type"] == "dmx" else self._relay_executor
         future = executor.submit(self._execute, cue)
         future.add_done_callback(
@@ -272,6 +294,8 @@ class ActionDispatcher:
             message = str(exc)
             state = "error"
         with self._lock:
+            if cue_id.startswith("manual-") and cue_id not in self._manual_activity_ids:
+                return
             self._activity[cue_id] = {
                 "state": state,
                 "message": message,

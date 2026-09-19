@@ -129,7 +129,7 @@ button { color: inherit; }
   gap: 22px;
 }
 
-.player-panel, .queue-panel, .cue-panel {
+.player-panel, .queue-panel, .live-panel, .cue-panel {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -140,6 +140,7 @@ button { color: inherit; }
 
 .player-panel { padding: clamp(22px, 3.1vw, 40px); }
 .queue-panel { padding: clamp(20px, 2.3vw, 30px); }
+.live-panel { grid-column: 1 / -1; padding: clamp(22px, 3vw, 36px); }
 .cue-panel { grid-column: 1 / -1; padding: clamp(22px, 3vw, 36px); }
 
 .panel-heading, .queue-heading {
@@ -310,6 +311,38 @@ h1, .queue-heading h2 { margin-bottom: 0; font-size: clamp(24px, 3vw, 34px); lin
 .mute-button[aria-pressed="true"] { color: var(--danger); border-color: rgb(255 118 111 / 55%); background: rgb(255 118 111 / 8%); }
 .volume-control input[type="range"] { min-width: 0; width: 100%; accent-color: var(--orange); cursor: pointer; }
 .volume-control output { color: var(--paper); font: 600 12px "SFMono-Regular", Consolas, monospace; text-align: right; }
+
+.live-control-heading {
+  margin-bottom: 22px;
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.live-control-heading h2 { margin: 0; font-size: 25px; line-height: 1.05; letter-spacing: -.04em; }
+.live-control-heading p:last-child { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.live-badge { flex: 0 0 auto; padding: 7px 10px; border: 1px solid rgb(185 232 106 / 30%); border-radius: 999px; color: var(--green); background: rgb(185 232 106 / 7%); font-size: 10px; font-weight: 720; text-transform: uppercase; letter-spacing: .06em; }
+.live-control-grid { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.2fr); gap: 14px; }
+.live-card { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: #181715; }
+.live-card-heading { margin-bottom: 18px; display: flex; align-items: center; gap: 11px; }
+.live-card-heading > div { min-width: 0; }
+.live-card-heading strong, .live-card-heading small { display: block; }
+.live-card-heading strong { font-size: 13px; }
+.live-card-heading small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.live-card-icon { flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--orange); background: rgb(255 106 36 / 11%); }
+.live-card-icon.dmx { color: var(--green); background: rgb(185 232 106 / 10%); }
+.live-card-icon .icon { width: 17px; height: 17px; }
+.live-card .field { margin-bottom: 12px; }
+.live-dmx-fields { align-items: end; }
+.live-card-footer { min-height: 43px; margin-top: 6px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.live-actions { display: flex; gap: 8px; }
+.live-result { min-width: 0; margin: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.live-result i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #625c54; }
+.live-result span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-result.running i { background: #ffc04e; box-shadow: 0 0 0 4px rgb(255 192 78 / 9%); }
+.live-result.success i { background: var(--green); box-shadow: 0 0 0 4px rgb(185 232 106 / 9%); }
+.live-result.error { color: var(--danger); }
+.live-result.error i { background: var(--danger); }
 
 .dropzone {
   position: relative;
@@ -562,13 +595,14 @@ footer code { color: #aaa195; font-family: "SFMono-Regular", Consolas, monospace
 
 @media (max-width: 760px) {
   .audio-panel { grid-template-columns: 1fr; gap: 12px; }
+  .live-control-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 600px) {
   .topbar { height: 66px; }
   .connection-label { max-width: 130px; }
   .shell { padding-top: 18px; gap: 14px; }
-  .player-panel, .queue-panel, .cue-panel { border-radius: 17px; }
+  .player-panel, .queue-panel, .live-panel, .cue-panel { border-radius: 17px; }
   .screen { min-height: 280px; }
   .transport { grid-template-columns: 1fr 1fr; }
   .transport .primary { grid-column: 1 / -1; }
@@ -582,6 +616,10 @@ footer code { color: #aaa195; font-family: "SFMono-Regular", Consolas, monospace
   .cue-row { grid-template-columns: 86px minmax(0, 1fr) auto; gap: 9px; }
   .cue-summary { white-space: normal; }
   .form-grid.two-columns, .form-grid.three-columns { grid-template-columns: 1fr; }
+  .live-control-heading { flex-direction: column; }
+  .live-card-footer { align-items: stretch; flex-direction: column; }
+  .live-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .live-card-footer .primary-button, .live-card-footer .secondary-button { width: 100%; }
   .cue-dialog form { padding: 22px 18px; }
   footer { flex-wrap: wrap; }
 }

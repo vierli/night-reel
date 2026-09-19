@@ -6,6 +6,8 @@ The control screen shows the current file and live timecode, supports start, pau
 
 The action track schedules persistent timecode cues for every video. A cue can pulse the relay from the `ESP32_Relais_Webservice` project or control one/all RGB fixtures through the integrated DMX512 output adapted from the `DMX Test` project.
 
+The **Live controls** panel can trigger the ESP32 relay or change the DMX lights immediately while a video continues to play. These commands are independent from the saved action track.
+
 ## Raspberry Pi 5 setup
 
 Night Reel targets the current 64-bit Raspberry Pi OS with the desktop. Connect the Pi to the display and open a terminal in the graphical desktop session.
@@ -78,6 +80,10 @@ Every video in the media list has a loop marker. Active markers determine which 
 ## Audio controls
 
 The player panel contains a volume slider, a mute button, and an **Audio output** selector. The selector is populated with the devices reported by VLC, such as HDMI, USB, analog, or Bluetooth outputs. Some VLC output modules only report their device list while a video with audio is playing; if only **System default** is initially visible, start a video and wait a few seconds. The selected device, volume, and mute state are retained when the playlist moves to the next video.
+
+## Live controls
+
+The **Live controls** panel operates independently of VLC and the timecode action track. Enter the ESP32 address and pulse duration to trigger the relay immediately. For DMX, select one fixture or all fixtures, choose a color, and use **Apply color** or **Lights off**. A manual light change remains active until another manual command or timecode cue changes the same fixture. The browser remembers the manual relay address and duration.
 
 ## Timecode actions
 

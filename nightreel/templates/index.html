@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#11100f">
     <meta name="description" content="Control local looped video playback on your Raspberry Pi.">
     <title>Night Reel · Pi video control</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=10">
-    <script src="{{ url_for('static', filename='app.js') }}?v=10" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=11">
+    <script src="{{ url_for('static', filename='app.js') }}?v=11" defer></script>
   </head>
   <body>
     <svg class="icon-library" aria-hidden="true">
@@ -140,6 +140,73 @@
           <p>Uploaded videos appear here and play from top to bottom.</p>
         </div>
       </aside>
+
+      <section class="live-panel" aria-labelledby="live-control-heading">
+        <div class="live-control-heading">
+          <div>
+            <p class="eyebrow">Independent show control</p>
+            <h2 id="live-control-heading">Live controls</h2>
+            <p>Operate the relay and lights immediately without changing video playback or the action track.</p>
+          </div>
+          <span class="live-badge">Always available</span>
+        </div>
+
+        <div class="live-control-grid">
+          <form class="live-card" id="live-relay-form">
+            <div class="live-card-heading">
+              <span class="live-card-icon"><svg class="icon"><use href="#i-bolt"></use></svg></span>
+              <div><strong>ESP32 relay</strong><small>Send an immediate timed pulse</small></div>
+            </div>
+            <label class="field">
+              <span>ESP32 service address</span>
+              <input id="live-relay-url" type="url" value="http://esp32-relay.local" placeholder="http://esp32-relay.local" required>
+            </label>
+            <label class="field">
+              <span>Pulse duration (ms)</span>
+              <input id="live-relay-duration" type="number" min="1" max="30000" step="1" value="1000" required>
+            </label>
+            <div class="live-card-footer">
+              <p class="live-result" id="live-relay-status"><i></i><span>Ready</span></p>
+              <button class="primary-button" id="live-relay-trigger" type="submit">
+                <svg class="icon"><use href="#i-bolt"></use></svg>
+                Trigger relay
+              </button>
+            </div>
+          </form>
+
+          <form class="live-card" id="live-dmx-form">
+            <div class="live-card-heading">
+              <span class="live-card-icon dmx"><svg class="icon"><use href="#i-bolt"></use></svg></span>
+              <div><strong>DMX lights</strong><small>Changes stay active until the next DMX command</small></div>
+            </div>
+            <p class="dmx-inline-status" id="live-dmx-connection"><i></i><span>Checking integrated DMX output…</span></p>
+            <div class="form-grid three-columns live-dmx-fields">
+              <label class="field">
+                <span>Target</span>
+                <select id="live-dmx-target">
+                  <option value="fixture">Single fixture</option>
+                  <option value="all">All fixtures</option>
+                </select>
+              </label>
+              <label class="field" id="live-dmx-fixture-field">
+                <span>Fixture</span>
+                <select id="live-dmx-fixture"></select>
+              </label>
+              <label class="field">
+                <span>Color</span>
+                <input class="color-input" id="live-dmx-color" type="color" value="#ff6a24">
+              </label>
+            </div>
+            <div class="live-card-footer">
+              <p class="live-result" id="live-dmx-status"><i></i><span>Ready</span></p>
+              <div class="live-actions">
+                <button class="secondary-button" id="live-dmx-off" type="button" disabled>Lights off</button>
+                <button class="primary-button" id="live-dmx-on" type="submit" disabled>Apply color</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </section>
 
       <section class="cue-panel" aria-labelledby="cue-heading">
         <div class="cue-heading">

@@ -43,11 +43,14 @@ def test_empty_status_and_health(client):
     assert page.status_code == 200
     assert b"Night Reel" in page.data
     assert b"display-mode-button" in page.data
+    assert b"Live controls" in page.data
+    assert b'id="live-relay-trigger"' in page.data
+    assert b'id="live-dmx-on"' in page.data
     assert b"Action track" in page.data
     assert b"cue-dialog" in page.data
     assert b'id="cue-delete"' in page.data
     assert b"DMX Desk service address" not in page.data
-    assert b"app.js?v=10" in page.data
+    assert b"app.js?v=11" in page.data
     assert b'id="black-screen-button"' not in page.data
     assert b'id="i-copy"' in page.data
     assert page.headers["Cache-Control"] == "no-store"
@@ -472,6 +475,75 @@ def test_invalid_action_configuration_is_rejected(client):
         },
     )
     assert bad_color.status_code == 400
+
+    bad_manual_action = client.post(
+        "/api/actions/trigger",
+        json={"type": "relay", "config": {"base_url": "not-a-url", "duration_ms": 10}},
+    )
+    assert bad_manual_action.status_code == 400
+
+
+def test_manual_relay_and_dmx_controls_do_not_interrupt_video(client, app):
+    video = upload(client, "live-control.mp4").get_json()["added"][0]
+    playing = client.post(
+        "/api/control", json={"action": "play", "video_id": video["id"]}
+    )
+    assert playing.get_json()["player"]["state"] == "playing"
+
+    dispatcher = app.extensions["nightreel_actions"]
+    relay_requests = []
+    dispatcher._request = (
+        lambda url, method, payload: relay_requests.append((url, method, payload)) or {}
+    )
+
+    relay = client.post(
+        "/api/actions/trigger",
+        json={
+            "type": "relay",
+            "config": {"base_url": "http://relay.local/", "duration_ms": 1250},
+        },
+    )
+    dmx = client.post(
+        "/api/actions/trigger",
+        json={
+            "type": "dmx",
+            "config": {
+                "target": "fixture",
+                "fixture_id": 2,
+                "enabled": True,
+                "color": "#1234AB",
+                "duration_ms": 0,
+            },
+        },
+    )
+    assert relay.status_code == 202
+    assert dmx.status_code == 202
+    relay_id = relay.get_json()["action_id"]
+    dmx_id = dmx.get_json()["action_id"]
+    assert relay_id.startswith("manual-")
+    assert dmx_id.startswith("manual-")
+
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        status = client.get("/api/status").get_json()
+        activity = status["cue_activity"]
+        if all(
+            activity.get(action_id, {}).get("state") == "success"
+            for action_id in (relay_id, dmx_id)
+        ):
+            break
+        time.sleep(0.01)
+
+    assert status["player"]["state"] == "playing"
+    assert status["player"]["current_id"] == video["id"]
+    assert activity[relay_id]["message"] == "Relay active for 1250 ms"
+    assert activity[dmx_id]["message"] == "Fixture 2 on until next change"
+    fixture = status["dmx"]["universe"]["fixtures"][1]
+    assert fixture["enabled"] is True
+    assert fixture["color"] == "#1234ab"
+    assert relay_requests == [
+        ("http://relay.local/api/relay", "POST", {"duration_ms": 1250})
+    ]
 
 
 def test_dmx_cue_changes_the_integrated_universe(client):

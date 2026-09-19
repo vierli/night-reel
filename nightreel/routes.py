@@ -12,7 +12,7 @@ from flask import (
 )
 from werkzeug.exceptions import RequestEntityTooLarge
 
-from .actions import CueError, CueStore
+from .actions import CueError, CueStore, normalize_action
 from .player import PlaybackController, PlaybackError
 from .storage import PlaylistError
 
@@ -162,6 +162,13 @@ def test_cue(cue_id: str):
         raise CueError("Cue not found")
     player().action_dispatcher.dispatch(cue)
     return jsonify(ok=True), 202
+
+
+@web.post("/api/actions/trigger")
+def trigger_action():
+    action = normalize_action(request.get_json(silent=True))
+    player().action_dispatcher.dispatch(action)
+    return jsonify(ok=True, action_id=action["id"]), 202
 
 
 @web.app_errorhandler(PlaylistError)
