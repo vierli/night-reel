@@ -16,7 +16,6 @@ const dom = {
   stop: document.querySelector("#stop-button"),
   displayMode: document.querySelector("#display-mode-button"),
   displayModeIcon: document.querySelector("#display-mode-icon"),
-  blackScreen: document.querySelector("#black-screen-button"),
   next: document.querySelector("#next-button"),
   count: document.querySelector("#queue-count"),
   list: document.querySelector("#queue-list"),
@@ -42,6 +41,7 @@ const dom = {
   cueDialogClose: document.querySelector("#cue-dialog-close"),
   cueCancel: document.querySelector("#cue-cancel"),
   cueDelete: document.querySelector("#cue-delete"),
+  cueSubmit: document.querySelector("#cue-submit"),
   cueId: document.querySelector("#cue-id"),
   cueTime: document.querySelector("#cue-time"),
   cueType: document.querySelector("#cue-type"),
@@ -79,6 +79,7 @@ let cueItems = [];
 let cueLoadToken = 0;
 let audioDevicesKey = "";
 let dmxFixturesKey = "";
+let copyingCue = false;
 let displayClock = {
   currentId: null,
   elapsedMs: 0,
@@ -128,7 +129,7 @@ function formatBytes(bytes) {
 }
 
 function stateLabel(state) {
-  return ({ playing: "Playing", paused: "Paused", loading: "Loading", black: "Black screen", error: "Error", ended: "Advancing" })[state] || "Stopped";
+  return ({ playing: "Playing", paused: "Paused", loading: "Loading", error: "Error", ended: "Advancing" })[state] || "Stopped";
 }
 
 function showToast(message, isError = false) {
@@ -169,11 +170,9 @@ function applyStatus(data) {
   const player = data.player;
   const current = player.current;
   const state = player.state;
-  const blackScreenActive = player.black_screen;
-
   const videoChanged = displayClock.currentId !== player.current_id;
   const wasStopped = previousState === "stopped" && state !== "stopped";
-  if (videoChanged || state === "stopped" || wasStopped || blackScreenActive) {
+  if (videoChanged || state === "stopped" || wasStopped) {
     displayClock.elapsedMs = player.elapsed_ms || 0;
   } else {
     displayClock.elapsedMs = Math.max(displayClock.elapsedMs, player.elapsed_ms || 0);
@@ -184,10 +183,10 @@ function applyStatus(data) {
   dom.statePill.dataset.state = state;
   dom.statePill.textContent = stateLabel(state);
   dom.screen.dataset.state = state;
-  dom.screenKicker.textContent = blackScreenActive ? "Live on the attached display" : state === "playing" ? "Live on the attached display" : state === "paused" ? "Playback held" : "Ready when you are";
-  dom.currentTitle.textContent = blackScreenActive ? "Black screen" : current?.name || "No video selected";
-  dom.currentFile.textContent = blackScreenActive ? "No playlist video is playing" : current?.filename || "Add an MP4 to start the loop";
-  dom.timelineStatus.textContent = blackScreenActive ? "Black screen active" : current ? `${stateLabel(state)} · ${current.name}` : "Waiting for a video";
+  dom.screenKicker.textContent = state === "playing" ? "Live on the attached display" : state === "paused" ? "Playback held" : "Ready when you are";
+  dom.currentTitle.textContent = current?.name || "No video selected";
+  dom.currentFile.textContent = current?.filename || "Add an MP4 to start the loop";
+  dom.timelineStatus.textContent = current ? `${stateLabel(state)} · ${current.name}` : "Waiting for a video";
   dom.backend.textContent = player.backend === "mock" ? "Demo playback engine" : "VLC playback engine";
 
   const hasVideos = data.playlist.length > 0;
@@ -195,9 +194,8 @@ function applyStatus(data) {
   const activeVideoCanResume = Boolean(current) && ["playing", "loading", "paused"].includes(state);
   dom.play.disabled = ((!hasLoopVideos && !activeVideoCanResume) || commandPending);
   dom.pause.disabled = state !== "playing" || commandPending;
-  dom.stop.disabled = (((!current || state === "stopped") && !blackScreenActive) || commandPending);
+  dom.stop.disabled = ((!current || state === "stopped") || commandPending);
   dom.displayMode.disabled = commandPending;
-  dom.blackScreen.disabled = commandPending;
   dom.next.disabled = !hasLoopVideos || commandPending;
   dom.play.querySelector("span").textContent = state === "paused" ? "Resume" : "Start";
   dom.displayMode.querySelector("span").textContent = player.fullscreen ? "Windowed" : "Fullscreen";
@@ -206,8 +204,6 @@ function applyStatus(data) {
     "aria-label",
     player.fullscreen ? "Switch Pi display to windowed mode" : "Switch Pi display to fullscreen mode",
   );
-  dom.blackScreen.querySelector("span").textContent = blackScreenActive ? "Exit black" : "Black screen";
-  dom.blackScreen.setAttribute("aria-pressed", String(blackScreenActive));
   dom.loopStatus.replaceChildren(
     icon("i-loop"),
     document.createTextNode(hasLoopVideos ? `${player.loop_count} in loop` : "Loop empty"),
@@ -369,7 +365,7 @@ function cueScaleDuration() {
 }
 
 function updateCuePlayhead(elapsed = 0) {
-  if (!snapshot || snapshot.player.current_id !== selectedCueVideoId || snapshot.player.black_screen) {
+  if (!snapshot || snapshot.player.current_id !== selectedCueVideoId) {
     dom.cuePlayhead.style.opacity = "0";
     return;
   }
@@ -451,6 +447,9 @@ function renderCueTrack() {
     actions.className = "cue-row-actions";
     actions.append(
       actionButton("i-play", "Test action now", () => testCue(cue)),
+      actionButton("i-copy", "Copy action to another timecode", () =>
+        openCueDialog(cue, cue.time_ms, true),
+      ),
       actionButton("i-edit", "Edit action", () => openCueDialog(cue)),
       actionButton("i-trash", "Delete action", () => deleteCue(cue), "danger"),
     );
@@ -476,11 +475,13 @@ function updateCueFormVisibility() {
   dom.dmxDuration.required = !isRelay && dmxOn && dom.dmxDurationMode.value === "timed";
 }
 
-function openCueDialog(cue = null, initialTimeMs = 0) {
+function openCueDialog(cue = null, initialTimeMs = 0, copy = false) {
   if (!selectedCueVideoId) return;
-  dom.cueId.value = cue?.id || "";
-  dom.cueDelete.hidden = !cue;
-  dom.cueDialogTitle.textContent = cue ? "Edit action" : "Add action";
+  copyingCue = Boolean(cue && copy);
+  dom.cueId.value = cue && !copy ? cue.id : "";
+  dom.cueDelete.hidden = !cue || copy;
+  dom.cueDialogTitle.textContent = copyingCue ? "Copy action" : cue ? "Edit action" : "Add action";
+  dom.cueSubmit.textContent = copyingCue ? "Create copy" : "Save action";
   dom.cueTime.value = formatCueTime(cue?.time_ms ?? initialTimeMs);
   dom.cueType.value = cue?.type || "relay";
   dom.cueLabel.value = cue?.label || "";
@@ -501,6 +502,7 @@ function openCueDialog(cue = null, initialTimeMs = 0) {
 
 function closeCueDialog() {
   if (dom.cueDialog.open) dom.cueDialog.close();
+  copyingCue = false;
 }
 
 async function saveCue(event) {
@@ -528,6 +530,7 @@ async function saveCue(event) {
           },
     };
     const cueId = dom.cueId.value;
+    const wasCopy = copyingCue;
     if (cueId) {
       await api(`/api/cues/${encodeURIComponent(cueId)}`, { method: "PUT", body: JSON.stringify(payload) });
     } else {
@@ -535,7 +538,7 @@ async function saveCue(event) {
     }
     closeCueDialog();
     await loadCues(selectedCueVideoId);
-    showToast(cueId ? "Action updated" : "Action scheduled");
+    showToast(wasCopy ? "Action copied" : cueId ? "Action updated" : "Action scheduled");
   } catch (error) {
     showToast(error.message, true);
   }
@@ -737,9 +740,6 @@ dom.pause.addEventListener("click", () => sendControl("pause"));
 dom.stop.addEventListener("click", () => sendControl("stop"));
 dom.displayMode.addEventListener("click", () => {
   if (snapshot) sendControl("display_mode", { fullscreen: !snapshot.player.fullscreen });
-});
-dom.blackScreen.addEventListener("click", () => {
-  if (snapshot) sendControl("black_screen", { enabled: !snapshot.player.black_screen });
 });
 dom.next.addEventListener("click", () => sendControl("next"));
 dom.volumeSlider.addEventListener("input", event => {

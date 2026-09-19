@@ -9,6 +9,5 @@ media/*
 !media/.gitkeep
 data/playlist.json
 data/cues.json
-data/black-screen.png
 data/*.tmp
 !.gitkeep

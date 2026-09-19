@@ -47,10 +47,17 @@ def test_empty_status_and_health(client):
     assert b"cue-dialog" in page.data
     assert b'id="cue-delete"' in page.data
     assert b"DMX Desk service address" not in page.data
-    assert b"app.js?v=9" in page.data
+    assert b"app.js?v=10" in page.data
+    assert b'id="black-screen-button"' not in page.data
+    assert b'id="i-copy"' in page.data
     assert page.headers["Cache-Control"] == "no-store"
     assert b"audio-device" in page.data
     assert b"volume-slider" in page.data
+
+    script = client.get("/static/app.js")
+    assert script.status_code == 200
+    assert b"Copy action to another timecode" in script.data
+    assert b"Action copied" in script.data
     assert client.get("/health").get_json() == {"ok": True}
     status = client.get("/api/status").get_json()
     assert status["playlist"] == []
@@ -60,7 +67,6 @@ def test_empty_status_and_health(client):
     assert status["player"]["engine_elapsed_ms"] == 0
     assert status["player"]["fallback_elapsed_ms"] == 0
     assert status["player"]["fullscreen"] is True
-    assert status["player"]["black_screen"] is False
     assert status["player"]["audio"] == {
         "volume": 100,
         "muted": False,
@@ -128,43 +134,13 @@ def test_audio_volume_mute_and_output_device_controls(client):
     ).status_code == 400
 
 
-def test_black_screen_works_without_a_playlist(client, app, tmp_path):
-    black_frame = tmp_path / "black-screen.png"
-    assert black_frame.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-
-    active = client.post(
+def test_black_screen_command_is_disabled(client):
+    response = client.post(
         "/api/control",
         json={"action": "black_screen", "enabled": True},
     )
-    assert active.status_code == 200
-    assert active.get_json()["player"]["state"] == "black"
-    assert active.get_json()["player"]["black_screen"] is True
-    assert active.get_json()["player"]["current"] is None
-
-    inactive = client.post(
-        "/api/control",
-        json={"action": "black_screen", "enabled": False},
-    )
-    assert inactive.get_json()["player"]["state"] == "stopped"
-    assert inactive.get_json()["player"]["black_screen"] is False
-
-    invalid = client.post(
-        "/api/control",
-        json={"action": "black_screen", "enabled": 1},
-    )
-    assert invalid.status_code == 400
-
-
-def test_playing_a_video_exits_black_screen(client):
-    video = upload(client, "after-black.mp4").get_json()["added"][0]
-    client.post("/api/control", json={"action": "black_screen", "enabled": True})
-
-    playing = client.post(
-        "/api/control",
-        json={"action": "play", "video_id": video["id"]},
-    ).get_json()
-    assert playing["player"]["state"] == "playing"
-    assert playing["player"]["black_screen"] is False
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Unknown playback command"
 
 
 def test_upload_play_pause_stop_and_delete(client):

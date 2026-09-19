@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#11100f">
     <meta name="description" content="Control local looped video playback on your Raspberry Pi.">
     <title>Night Reel · Pi video control</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=9">
-    <script src="{{ url_for('static', filename='app.js') }}?v=9" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=10">
+    <script src="{{ url_for('static', filename='app.js') }}?v=10" defer></script>
   </head>
   <body>
     <svg class="icon-library" aria-hidden="true">
@@ -17,7 +17,6 @@
       <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 5 9 7-9 7zm10 0h2v14h-2z"/></symbol>
       <symbol id="i-fullscreen" viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zm10 0h6v6h-2V6h-4zm4 10h2v6h-6v-2h4zM4 14h2v4h4v2H4z"/></symbol>
       <symbol id="i-windowed" viewBox="0 0 24 24"><path d="M5 4h15v12h-3v4H4V8h1zm2 4h10v6h1V6H7zm-1 2v8h9v-2H5V10z"/></symbol>
-      <symbol id="i-black-screen" viewBox="0 0 24 24"><path d="M3 5h18v14H3zm2 2v10h14V7z"/></symbol>
       <symbol id="i-upload" viewBox="0 0 24 24"><path d="M11 16V8.8L8.4 11.4 7 10l5-5 5 5-1.4 1.4L13 8.8V16zm-5 3v-5h2v3h8v-3h2v5z"/></symbol>
       <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 3.8 20.2 7 17 10.2V8H8a3 3 0 0 0-3 3H3a5 5 0 0 1 5-5h9zM7 13.8V16h9a3 3 0 0 0 3-3h2a5 5 0 0 1-5 5H7v2.2L3.8 17z"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M8 4h8l1 2h3v2H4V6h3zm-1 6h10l-1 10H8z"/></symbol>
@@ -25,6 +24,7 @@
       <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6.6 8.6 5.4 5.4 5.4-5.4L16 7.2l-4 4-4-4z"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
       <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16.9 3.6 3.5 3.5L9 18.5 4 20l1.5-5zM7.2 15.9l-.5 1.4 1.4-.5 9.5-9.5-.9-.9z"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><path d="M8 7V4h12v12h-3v4H4V7zm2 0h7v7h1V6h-8zm-4 2v9h9v-2H8V9z"/></symbol>
       <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13.2 2 5 13h6l-.2 9L19 10h-6z"/></symbol>
       <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zm12.2-.8a5.4 5.4 0 0 1 0 7.6l-1.4-1.4a3.4 3.4 0 0 0 0-4.8zm2.8-2.8a9.3 9.3 0 0 1 0 13.2l-1.4-1.4a7.3 7.3 0 0 0 0-10.4z"/></symbol>
       <symbol id="i-muted" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zm11.7.3 1.8 1.8 1.8-1.8 1.4 1.4-1.8 1.8 1.8 1.8-1.4 1.4-1.8-1.8-1.8 1.8-1.4-1.4 1.8-1.8-1.8-1.8z"/></symbol>
@@ -90,10 +90,6 @@
           <button class="control" id="display-mode-button" type="button">
             <svg class="icon"><use id="display-mode-icon" href="#i-windowed"></use></svg>
             <span>Windowed</span>
-          </button>
-          <button class="control black-control" id="black-screen-button" type="button" aria-pressed="false">
-            <svg class="icon"><use href="#i-black-screen"></use></svg>
-            <span>Black screen</span>
           </button>
           <button class="control icon-control" id="next-button" type="button" aria-label="Play next video" title="Next video">
             <svg class="icon"><use href="#i-next"></use></svg>
@@ -281,7 +277,7 @@
         <div class="dialog-actions">
           <button class="danger-button" id="cue-delete" type="button" hidden>Delete action</button>
           <button class="secondary-button" id="cue-cancel" type="button">Cancel</button>
-          <button class="primary-button" type="submit">Save action</button>
+          <button class="primary-button" id="cue-submit" type="submit">Save action</button>
         </div>
       </form>
     </dialog>

@@ -2,7 +2,7 @@
 
 Night Reel is a local MP4 loop player for a Raspberry Pi 5. VLC renders video on the Pi's attached display while any phone, tablet, or computer on the same network can control playback from a web browser.
 
-The control screen shows the current file and live timecode, supports start, pause, stop, next, fullscreen/windowed display modes, a persistent black-screen output, and VLC audio controls. It also lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
+The control screen shows the current file and live timecode, supports start, pause, stop, next, fullscreen/windowed display modes, and VLC audio controls. It also lets you upload, reorder, play, or permanently delete MP4 files. The playlist order survives restarts and automatically wraps back to the first video.
 
 The action track schedules persistent timecode cues for every video. A cue can pulse the relay from the `ESP32_Relais_Webservice` project or control one/all RGB fixtures through the integrated DMX512 output adapted from the `DMX Test` project.
 
@@ -125,7 +125,6 @@ Disable the serial login shell and enable the UART in `sudo raspi-config`, then 
 - If the active video ends, Night Reel starts the next marked item automatically. The final marked item wraps to the first.
 - If the active video is deleted, playback continues with the next available item.
 - Deleting a video also removes its saved timecode cues.
-- **Black screen** stops playlist playback and keeps VLC's video output open on a generated black frame. Press Start or select a video to resume playback.
 - The ESP32 relay service is unauthenticated. Keep it on a trusted LAN and do not forward its port to the internet.
 
 ## Tests

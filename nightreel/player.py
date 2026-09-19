@@ -26,7 +26,6 @@ class PlaybackEngine(Protocol):
     def state(self) -> str: ...
     def elapsed_ms(self) -> int: ...
     def duration_ms(self) -> int: ...
-    def show_black_screen(self, path: Path) -> None: ...
     def set_fullscreen(self, enabled: bool) -> bool: ...
     def fullscreen(self) -> bool: ...
     def set_volume(self, volume: int) -> int: ...
@@ -142,19 +141,6 @@ class VLCEngine:
         if self._media is not None:
             return max(0, int(self._media.get_duration()))
         return 0
-
-    def show_black_screen(self, path: Path) -> None:
-        self.stop()
-        media = self._instance.media_new_path(os.fspath(path))
-        media.add_option(":image-duration=-1")
-        media.add_option(":input-repeat=-1")
-        self._media = media
-        self._player.set_media(media)
-        self._output_settings_pending = True
-        result = self._player.play()
-        if result == -1:
-            raise PlaybackError("VLC could not open the black screen")
-        self._player.set_fullscreen(self._fullscreen)
 
     def set_fullscreen(self, enabled: bool) -> bool:
         self._fullscreen = bool(enabled)
@@ -306,11 +292,6 @@ class MockEngine:
     def duration_ms(self) -> int:
         return self._duration if self.path else 0
 
-    def show_black_screen(self, path: Path) -> None:
-        self.path = path
-        self._elapsed = 0
-        self._state = "playing"
-
     def set_fullscreen(self, enabled: bool) -> bool:
         self._fullscreen = bool(enabled)
         return self._fullscreen
@@ -360,7 +341,6 @@ class PlaybackController:
         self,
         store: PlaylistStore,
         engine: PlaybackEngine,
-        black_screen_path: Path,
         cue_store: CueStore,
         action_dispatcher: ActionDispatcher,
     ) -> None:
@@ -374,8 +354,6 @@ class PlaybackController:
         self._last_error: str | None = None
         self._clock_elapsed_ms = 0
         self._clock_started_at: float | None = None
-        self._black_screen_path = Path(black_screen_path)
-        self._black_screen = False
         self._cue_video_id: str | None = None
         self._cue_previous_ms = -1
         self._fired_cues: set[str] = set()
@@ -405,30 +383,25 @@ class PlaybackController:
                     "universe": {"blackout": False, "fixtures": []},
                 }
             )
-            if self._black_screen:
-                state = "black"
-                engine_elapsed = 0
-                fallback_elapsed = 0
-            else:
-                raw_state = self.engine.state() if self._loaded_id else "stopped"
-                if (
-                    self._pending_start_id is not None
-                    and self._pending_start_id == self._loaded_id
-                    and raw_state in {"playing", "paused"}
-                ):
-                    self._clear_pending_start_locked()
-                startup_pending = (
-                    self._pending_start_id is not None
-                    and self._pending_start_id == self._loaded_id
-                    and raw_state in {"stopped", "ended", "error"}
-                )
-                state = "loading" if startup_pending else raw_state
-                engine_elapsed = (
-                    0
-                    if startup_pending
-                    else self.engine.elapsed_ms() if self._loaded_id else 0
-                )
-                fallback_elapsed = self._clock_value(state) if self._loaded_id else 0
+            raw_state = self.engine.state() if self._loaded_id else "stopped"
+            if (
+                self._pending_start_id is not None
+                and self._pending_start_id == self._loaded_id
+                and raw_state in {"playing", "paused"}
+            ):
+                self._clear_pending_start_locked()
+            startup_pending = (
+                self._pending_start_id is not None
+                and self._pending_start_id == self._loaded_id
+                and raw_state in {"stopped", "ended", "error"}
+            )
+            state = "loading" if startup_pending else raw_state
+            engine_elapsed = (
+                0
+                if startup_pending
+                else self.engine.elapsed_ms() if self._loaded_id else 0
+            )
+            fallback_elapsed = self._clock_value(state) if self._loaded_id else 0
             elapsed = max(engine_elapsed, fallback_elapsed)
             duration = self.engine.duration_ms() if self._loaded_id else 0
             elapsed = min(elapsed, duration) if duration else elapsed
@@ -442,7 +415,6 @@ class PlaybackController:
                     "engine_elapsed_ms": engine_elapsed,
                     "fallback_elapsed_ms": fallback_elapsed,
                     "fullscreen": self.engine.fullscreen(),
-                    "black_screen": self._black_screen,
                     "audio": {
                         "volume": self.engine.volume(),
                         "muted": self.engine.muted(),
@@ -483,7 +455,6 @@ class PlaybackController:
             if not self.store.get(target_id):
                 raise PlaybackError("Video not found")
 
-            self._black_screen = False
             should_load = self._loaded_id != target_id or engine_state in {
                 "stopped",
                 "ended",
@@ -508,7 +479,7 @@ class PlaybackController:
 
     def pause(self) -> dict:
         with self._lock:
-            if not self._black_screen and self._loaded_id and self.engine.state() == "playing":
+            if self._loaded_id and self.engine.state() == "playing":
                 self._clock_elapsed_ms = max(
                     self.engine.elapsed_ms(),
                     self._clock_value("playing"),
@@ -520,9 +491,8 @@ class PlaybackController:
 
     def stop(self) -> dict:
         with self._lock:
-            if self._loaded_id or self._black_screen:
+            if self._loaded_id:
                 self.engine.stop()
-            self._black_screen = False
             self._clock_elapsed_ms = 0
             self._clock_started_at = None
             self._clear_pending_start_locked()
@@ -544,7 +514,6 @@ class PlaybackController:
             was_active = self._current_id == video_id
             was_playing = (
                 was_active
-                and not self._black_screen
                 and self.engine.state() in {"playing", "loading", "paused"}
             )
             _, removed_index = self.store.remove(video_id)
@@ -557,7 +526,6 @@ class PlaybackController:
                 self._clock_elapsed_ms = 0
                 self._clock_started_at = None
                 self._clear_pending_start_locked()
-                self._black_screen = False
                 self._reset_cues_locked(None)
                 if remaining:
                     if was_playing:
@@ -599,24 +567,6 @@ class PlaybackController:
     def set_audio_device(self, device_id: str) -> dict:
         with self._lock:
             self.engine.set_audio_device(device_id)
-            return self.status()
-
-    def set_black_screen(self, enabled: bool) -> dict:
-        with self._lock:
-            if enabled:
-                self.engine.stop()
-                self.engine.show_black_screen(self._black_screen_path)
-                self._black_screen = True
-                self._loaded_id = None
-            elif self._black_screen:
-                self.engine.stop()
-                self._black_screen = False
-                self._loaded_id = None
-            self._clock_elapsed_ms = 0
-            self._clock_started_at = None
-            self._clear_pending_start_locked()
-            self._last_error = None
-            self._reset_cues_locked(None)
             return self.status()
 
     def shutdown(self) -> None:

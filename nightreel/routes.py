@@ -87,11 +87,6 @@ def control():
         if not isinstance(device_id, str):
             return jsonify(error="device_id must be a string"), 400
         result = player().set_audio_device(device_id)
-    elif action == "black_screen":
-        enabled = payload.get("enabled")
-        if not isinstance(enabled, bool):
-            return jsonify(error="enabled must be true or false"), 400
-        result = player().set_black_screen(enabled)
     else:
         return jsonify(error="Unknown playback command"), 400
     return jsonify(result)

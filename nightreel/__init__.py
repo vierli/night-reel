@@ -9,7 +9,6 @@ from pathlib import Path
 from flask import Flask
 
 from .actions import ActionDispatcher, CueStore
-from .black_screen import ensure_black_frame
 from .dmx import DMXController, DMXRuntime, DMXUniverse, load_dmx_settings
 from .player import MockEngine, PlaybackController, VLCEngine
 from .routes import web
@@ -99,11 +98,9 @@ def create_app(test_config: dict | None = None) -> Flask:
             dmx_runtime=dmx_runtime,
         )
 
-    black_screen_path = ensure_black_frame(data_dir / "black-screen.png")
     controller = PlaybackController(
         store,
         engine,
-        black_screen_path,
         cue_store,
         action_dispatcher,
     )
